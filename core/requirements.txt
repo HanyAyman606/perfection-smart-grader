@@ -1,0 +1,7 @@
+PySide6
+fastapi
+uvicorn
+websockets
+pandas
+openpyxl
+sqlite-utils
