@@ -19,7 +19,7 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QTimer
 
 from admin_dashboard.theme import (
     Fonts, build_global_stylesheet, SKY_AQUA, TEXT_MUTED, CLOUDY_SKY,
-    RASPBERRY_PLUM, NEON_PINK
+    RASPBERRY_PLUM, NEON_PINK, INDIGO_BLOOM
 )
 from admin_dashboard.project_manager import ProjectManager, CONFIG_FILENAME
 from admin_dashboard.widgets.common import PulsingDot, NavButton, GridBackground, ScanlineOverlay
@@ -28,9 +28,9 @@ from admin_dashboard.screens.welcome_screen import WelcomeScreen
 from admin_dashboard.pages.setup_page import SetupPage
 from admin_dashboard.pages.templates_page import TemplatesPage
 from admin_dashboard.pages.session_pages import SessionManagerPage
+from admin_dashboard.pages.model_answer_page import ModelAnswerPage
 
-NAV_SETUP, NAV_TEMPLATES, NAV_SESSION = range(3)
-
+NAV_SETUP, NAV_ANSWER_KEY, NAV_TEMPLATES, NAV_SESSION = range(4)
 
 class CyberpunkDashboard(QMainWindow):
     def __init__(self):
@@ -96,6 +96,7 @@ class CyberpunkDashboard(QMainWindow):
     def activate_dashboard(self):
         self.master_stack.setCurrentIndex(2)
         self.page_setup.load_blueprint()
+        self.page_templates.load_saved_template()
         self.set_active_page(NAV_SETUP)
         self.sub_brand.setText(f"// WORKSPACE: {self.project_manager.project_name.upper()}")
 
@@ -196,10 +197,11 @@ class CyberpunkDashboard(QMainWindow):
         sidebar_layout.addSpacing(14)
 
         btn_setup = NavButton("⚙  Exam Blueprint", CLOUDY_SKY, self.fonts.orbitron)
+        btn_answer_key = NavButton("◉  Model Answer Key", INDIGO_BLOOM, self.fonts.orbitron)
         btn_templates = NavButton("▦  Template Builder", RASPBERRY_PLUM, self.fonts.orbitron)
         btn_live = NavButton("●  Session Manager", NEON_PINK, self.fonts.orbitron)
 
-        self.nav_buttons = [btn_setup, btn_templates, btn_live]
+        self.nav_buttons = [btn_setup,btn_answer_key ,btn_templates, btn_live]
 
         for btn in self.nav_buttons:
             sidebar_layout.addWidget(btn)
@@ -232,6 +234,7 @@ class CyberpunkDashboard(QMainWindow):
         self.indicator.setStyleSheet(f"background-color: {CLOUDY_SKY}; border-radius: 2px;")
 
         btn_setup.clicked.connect(lambda: self.set_active_page(NAV_SETUP))
+        btn_answer_key.clicked.connect(lambda: self.set_active_page(NAV_ANSWER_KEY))
         btn_templates.clicked.connect(lambda: self.set_active_page(NAV_TEMPLATES))
         btn_live.clicked.connect(lambda: self.set_active_page(NAV_SESSION))
 
@@ -263,10 +266,12 @@ class CyberpunkDashboard(QMainWindow):
         self.content_area.setObjectName("ContentArea")
 
         self.page_setup = SetupPage(self.fonts, self.project_manager)
+        self.page_answer_key = ModelAnswerPage(self.fonts, self.project_manager)
         self.page_templates = TemplatesPage(self.fonts, self.project_manager)
         self.page_session = SessionManagerPage(self.fonts, self.project_manager)
 
         self.content_area.addWidget(self.page_setup)
+        self.content_area.addWidget(self.page_answer_key)
         self.content_area.addWidget(self.page_templates)
         self.content_area.addWidget(self.page_session)
 
@@ -280,6 +285,9 @@ class CyberpunkDashboard(QMainWindow):
     # ------------------------------------------------------------------
     def set_active_page(self, index):
         self.content_area.setCurrentIndex(index)
+
+        if index == NAV_ANSWER_KEY:
+            self.page_answer_key.build_rows()
 
         if index == NAV_SESSION:
             self.page_session.reset_to_hub()

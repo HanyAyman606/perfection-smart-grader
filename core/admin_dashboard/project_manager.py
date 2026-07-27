@@ -16,13 +16,14 @@ import os
 import json
 import sqlite3
 from admin_dashboard.recent_projects import recent_projects
-from admin_dashboard.exam_modes import DEFAULT_MODE_ID
+from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY
 
 
 
 CONFIG_FILENAME = "nexus_project.json"
 DB_FILENAME = "roster.db"
 TEMPLATE_FILENAME = "cropped_template.jpg"
+SOURCE_TEMPLATE_FILENAME = "source_template.jpg"
 
 
 STUDENTS_TABLE_SQL = """
@@ -104,11 +105,42 @@ class ProjectManager:
             essay_points_map=essay_points_map,
         )
 
-    def save_template(self, template_path: str, roi_coordinates: dict):
-        self._update_config(template_path=template_path, roi_coordinates=roi_coordinates)
+    def save_template(self, template_path: str, roi_coordinates: dict, source_template_path: str = None):
+        fields = {"template_path": template_path, "roi_coordinates": roi_coordinates}
+        if source_template_path:
+            fields["source_template_path"] = source_template_path
+        self._update_config(**fields)
 
     def template_save_path(self) -> str:
         return os.path.join(self.project_dir, TEMPLATE_FILENAME)
+
+    def source_template_save_path(self) -> str:
+        return os.path.join(self.project_dir, SOURCE_TEMPLATE_FILENAME)
+
+    def clear_template(self):
+        """Deletes the saved template images from disk and clears the
+        related config fields — used by the ROI page's 'Clear Image' button."""
+        for path in (self.template_save_path(), self.source_template_save_path()):
+            if os.path.exists(path):
+                os.remove(path)
+        config = self.load_config()
+        for key in ("template_path", "source_template_path", "roi_coordinates"):
+            config.pop(key, None)
+        with open(self.config_path, "w") as f:
+            json.dump(config, f, indent=4)
+
+    def save_model_answers(self, answers_by_version: dict[str, dict], voided_by_version: dict[str, list]):
+        """answers_by_version / voided_by_version are keyed by version label
+        ("A", "B", ...). Quiz mode always has exactly one key
+        (exam_modes.SINGLE_VERSION_KEY); Shamel mode may have several —
+        same mcq_count/ranges/essays, different model answer per booklet.
+        Storing both modes in this nested shape means nothing downstream
+        (readiness checks, the sync packet) needs an if/else on mode."""
+        self._update_config(
+            model_answers=answers_by_version,
+            voided_questions=voided_by_version,
+            answer_versions=list(answers_by_version.keys()),
+        )
 
     # ------------------------------------------------------------------
     # Roster / groups (SQLite)
@@ -218,9 +250,49 @@ class ProjectManager:
             "roi_coordinates": exam_config.get("roi_coordinates", {}),
             "group_name": group_name,
             "roster": self.get_roster(group_name),
+            "answer_versions": exam_config.get("answer_versions", [SINGLE_VERSION_KEY]),
+            "model_answers": exam_config.get("model_answers", {}),      # {version: {"1": "A", ...}}
+            "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}
         }
 
+    def get_blueprint_readiness(self) -> list[str]:
+        """Returns human-readable problems blocking a meaningful sync
+        packet. Empty list = ready to send."""
+        if not self.is_active:
+            return ["No active workspace."]
 
+        config = self.load_config()
+        problems = []
 
+        mcq_count = config.get("mcq_count", 0)
+        if mcq_count <= 0:
+            problems.append("Exam Blueprint has not been configured.")
 
+        ranges = config.get("mcq_ranges", [])
+        covered = sum((r["end"] - r["start"] + 1) for r in ranges)
+        if covered < mcq_count:
+            problems.append("Mark ranges do not cover every MCQ question yet.")
 
+        answers_by_version = config.get("model_answers", {})
+        voided_by_version = config.get("voided_questions", {})
+        versions = config.get("answer_versions", [SINGLE_VERSION_KEY])
+        if not answers_by_version:
+            problems.append("No model answer key has been saved yet.")
+        for version in versions:
+            answers = answers_by_version.get(version, {})
+            voided = set(voided_by_version.get(version, []))
+            missing = [
+                q for q in range(1, mcq_count + 1)
+                if q not in voided and str(q) not in answers
+            ]
+            if missing:
+                label = f"Version {version}" if len(versions) > 1 else "Model answer key"
+                problems.append(f"{label}: {len(missing)} question(s) missing an answer.")
+
+        if not config.get("template_path"):
+            problems.append("No ROI template has been saved yet.")
+
+        if config.get("has_essays") and not config.get("essay_points_map"):
+            problems.append("Essay questions are enabled but have no point values saved.")
+
+        return problems

@@ -138,6 +138,32 @@ class ROIGraphicsView(QGraphicsView):
             self.scene.removeItem(self.roi_rect)
             self.roi_rect = None
 
+    def set_roi_from_coordinates(self, roi_coords: dict):
+        """Draws the pink box from saved {x, y, w, h} pixel coordinates —
+        used when re-opening a workspace to restore a previously-drawn ROI
+        without requiring the admin to redraw it by hand."""
+        if not self.image_item or not roi_coords:
+            return
+        self.clear_roi()
+        rect = QRectF(roi_coords["x"], roi_coords["y"], roi_coords["w"], roi_coords["h"])
+        pen = QPen(QColor(NEON_PINK))
+        pen.setWidth(3)
+        pen.setCosmetic(True)
+        brush = QBrush(QColor(247, 37, 133, 40))
+        self.roi_rect = self.scene.addRect(rect, pen, brush)
+
+    def clear_image(self):
+        """Full reset: removes the loaded image, the ROI box, and rotation
+        state — distinct from clear_roi(), which only removes the box."""
+        self.scene.clear()
+        self.original_pixmap = None
+        self.current_pixmap = None
+        self.image_item = None
+        self.roi_rect = None
+        self.start_pos = None
+        self.rotation = 0
+        self.set_mode("PAN")
+
     def get_roi_coordinates(self):
         if not self.roi_rect:
             return None

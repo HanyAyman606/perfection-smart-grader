@@ -21,12 +21,25 @@ from dataclasses import dataclass
 class ExamMode:
     id: str     # stored in config/DB — never rename once used, breaks old sessions
     label: str  # shown in the UI dropdown
+    id_digit_count: int = 3           # digits in the student ID for this mode
+    requires_exam_day: bool = False   # whether an "Exam Day" selector is needed
+    has_answer_versions: bool = False # True: same blueprint, multiple model-answer keys
+                                       # (e.g. Shamel booklets A/B/C/D — shuffled question
+                                       # order printed on paper, same mcq_count/ranges/essays)
 
 
 EXAM_MODES = [
     ExamMode(id="quiz", label="Quiz Mode"),
-    ExamMode(id="exam", label="Exam Mode"),
+    ExamMode(
+        id="shamel", label="Shamel Mode",
+        id_digit_count=4, requires_exam_day=True, has_answer_versions=True,
+    ),
 ]
+
+# Version label used internally for modes where has_answer_versions is False,
+# so the on-disk schema (model_answers / voided_questions nested by version)
+# never has to branch on mode — Quiz just always has exactly this one version.
+SINGLE_VERSION_KEY = "A"
 
 DEFAULT_MODE_ID = EXAM_MODES[0].id
 

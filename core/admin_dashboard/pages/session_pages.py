@@ -16,7 +16,7 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QScrollArea, QListWidget, QMessageBox, QFileDialog, QInputDialog, QStackedWidget
+    QScrollArea, QListWidget, QMessageBox, QFileDialog, QInputDialog, QStackedWidget, QDialog
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -28,6 +28,7 @@ from admin_dashboard.theme import (
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.common import StatCard, apply_card_shadow
 from admin_dashboard.workers.server_worker import ServerWorker
+from admin_dashboard.screens.payload_preview_dialog import PayloadPreviewDialog
 
 
 class SessionManagerPage(QWidget):
@@ -284,8 +285,12 @@ class SessionManagerPage(QWidget):
 
     def start_live_grading_session(self):
         try:
-            if not os.path.exists(self.project_manager.config_path):
-                QMessageBox.critical(self, "Error", "No Exam Blueprint found.")
+            problems = self.project_manager.get_blueprint_readiness()
+            if problems:
+                QMessageBox.critical(
+                    self, "Exam Not Ready",
+                    "This exam isn't ready to sync yet:\n\n" + "\n".join(f"• {p}" for p in problems)
+                )
                 return
 
             roster = self.project_manager.get_roster(self.active_group_name)
@@ -296,6 +301,10 @@ class SessionManagerPage(QWidget):
                 return
 
             master_packet = self.project_manager.build_sync_packet(self.active_group_name)
+
+            preview = PayloadPreviewDialog(master_packet, self.fonts.orbitron, self.fonts.mono, parent=self)
+            if preview.exec() != QDialog.DialogCode.Accepted:
+                return
 
             self.server_thread = ServerWorker(master_packet)
             self.server_thread.log_signal.connect(self.log_server_message)

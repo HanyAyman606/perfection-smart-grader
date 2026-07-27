@@ -5,7 +5,9 @@ pages/templates_page.py
 box, crop + save it into the active workspace via ProjectManager.
 """
 
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QMessageBox, QFileDialog
+import os
+
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QMessageBox, QFileDialog, QLabel
 from PySide6.QtCore import Qt, QRect
 from PySide6.QtGui import QFont, QImageReader, QPixmap
 
@@ -30,6 +32,10 @@ class TemplatesPage(QWidget):
     def _build_ui(self, content_layout):
         orbitron = self.fonts.orbitron
 
+        self.status_lbl = QLabel("")
+        self.status_lbl.setFont(QFont(self.fonts.mono, 10))
+        content_layout.addWidget(self.status_lbl)
+
         tool_row = QHBoxLayout()
         tool_row.setSpacing(10)
 
@@ -40,6 +46,7 @@ class TemplatesPage(QWidget):
         btn_zoom_out = make_tool_button("➖ ZOOM", ELECTRIC_SAPPHIRE, orbitron)
         btn_draw = make_tool_button("🎯 2. DRAW ROI", NEON_PINK, orbitron)
         btn_clear_roi = make_tool_button("↺ CLEAR ROI", WARN_COLOR, orbitron)
+        btn_clear_image = make_tool_button("🗑 CLEAR IMAGE", WARN_COLOR, orbitron)
 
         self.roi_canvas = ROIGraphicsView()
         self.roi_canvas.setMinimumHeight(420)
@@ -51,8 +58,9 @@ class TemplatesPage(QWidget):
         btn_zoom_out.clicked.connect(self.roi_canvas.zoom_out)
         btn_draw.clicked.connect(lambda: self.roi_canvas.set_mode("DRAW"))
         btn_clear_roi.clicked.connect(self.roi_canvas.clear_roi)
+        btn_clear_image.clicked.connect(self.clear_image)
 
-        for b in (btn_load, btn_pan, btn_rotate, btn_zoom_in, btn_zoom_out, btn_draw, btn_clear_roi):
+        for b in (btn_load, btn_pan, btn_rotate, btn_zoom_in, btn_zoom_out, btn_draw, btn_clear_roi, btn_clear_image):
             tool_row.addWidget(b)
         tool_row.addStretch()
 
@@ -84,10 +92,16 @@ class TemplatesPage(QWidget):
             image = reader.read()
             pixmap = QPixmap.fromImage(image)
             self.roi_canvas.load_image(pixmap)
+            self.status_lbl.setStyleSheet(f"color: {WARN_COLOR};")
+            self.status_lbl.setText("⚠ Image loaded but not saved yet — draw a box and click Save.")
 
     def save_template(self):
         if not self.project_manager.is_active:
             QMessageBox.warning(self, "Error", "No active workspace. Open or create a project first.")
+            return
+
+        if self.roi_canvas.current_pixmap is None:
+            QMessageBox.warning(self, "Error", "Load an exam image first.")
             return
 
         roi_coords = self.roi_canvas.get_roi_coordinates()
@@ -98,14 +112,72 @@ class TemplatesPage(QWidget):
         try:
             # Crop the CURRENT pixmap (rotation baked in) so the crop always
             # matches what was seen on screen.
-            saved_image_path = self.project_manager.template_save_path()
+            cropped_path = self.project_manager.template_save_path()
             crop_rect = QRect(roi_coords["x"], roi_coords["y"], roi_coords["w"], roi_coords["h"])
             cropped_pixmap = self.roi_canvas.current_pixmap.copy(crop_rect)
-            cropped_pixmap.save(saved_image_path, "JPG", 100)
+            cropped_pixmap.save(cropped_path, "JPG", 100)
 
-            self.project_manager.save_template(saved_image_path, roi_coords)
+            # Also persist the full (uncropped) image the box was drawn on —
+            # needed so re-opening this workspace can restore the picture
+            # and redraw the box on top of it, not just the crop result.
+            source_path = self.project_manager.source_template_save_path()
+            self.roi_canvas.current_pixmap.save(source_path, "JPG", 100)
 
+            self.project_manager.save_template(cropped_path, roi_coords, source_path)
+
+            self.status_lbl.setStyleSheet(f"color: {CLOUDY_SKY};")
+            self.status_lbl.setText("✔ Template saved to workspace.")
             QMessageBox.information(self, "Success", "Template cropped and saved to workspace!")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
+
+    # ------------------------------------------------------------------
+    def load_saved_template(self):
+        """Restores a previously-saved image + ROI box. Called by the
+        dashboard right after a workspace is activated, mirroring
+        SetupPage.load_blueprint() / ModelAnswerPage.build_rows()."""
+        self.roi_canvas.clear_image()
+
+        if not self.project_manager.is_active:
+            self.status_lbl.setText("No active workspace.")
+            return
+
+        config = self.project_manager.load_config()
+        source_path = config.get("source_template_path")
+        roi_coords = config.get("roi_coordinates")
+
+        if not source_path or not os.path.exists(source_path):
+            self.status_lbl.setStyleSheet(f"color: {TEXT_MUTED};")
+            self.status_lbl.setText("No template saved yet for this workspace.")
+            return
+
+        pixmap = QPixmap(source_path)
+        self.roi_canvas.load_image(pixmap)
+        if roi_coords:
+            self.roi_canvas.set_roi_from_coordinates(roi_coords)
+
+        self.status_lbl.setStyleSheet(f"color: {CLOUDY_SKY};")
+        self.status_lbl.setText("✔ Template loaded from workspace.")
+
+    def clear_image(self):
+        """Wipes the canvas AND the saved template files/config — distinct
+        from 'Clear ROI', which only erases the box and keeps the image."""
+        if not self.project_manager.is_active:
+            self.roi_canvas.clear_image()
+            self.status_lbl.setText("")
+            return
+
+        confirm = QMessageBox.question(
+            self, "Clear Image",
+            "This removes the loaded image and ROI box, and deletes the saved "
+            "template files from this workspace. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        self.roi_canvas.clear_image()
+        self.project_manager.clear_template()
+        self.status_lbl.setStyleSheet(f"color: {TEXT_MUTED};")
+        self.status_lbl.setText("Image cleared. No template saved for this workspace.")
