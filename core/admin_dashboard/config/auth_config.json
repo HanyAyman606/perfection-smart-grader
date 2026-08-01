@@ -1,3 +1,5 @@
 {
+  "salt": "e7e299fe2ed5bd40ac880f4394a07772",
+  "password_hash": "ddea3167ec8d4e0b9767d77f748a889a5288d66e4317924335e04324e3f58eb5",
   "iterations": 200000
 }

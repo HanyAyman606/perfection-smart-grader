@@ -12,11 +12,11 @@ and one background thread — splitting them further would just mean passing
 that state through extra constructor args for no real decoupling benefit.
 """
 
-import os
+
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QScrollArea, QListWidget, QMessageBox, QFileDialog, QInputDialog, QStackedWidget, QDialog
+    QScrollArea, QListWidget, QMessageBox, QFileDialog, QStackedWidget, QDialog
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -28,7 +28,10 @@ from admin_dashboard.theme import (
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.common import StatCard, apply_card_shadow
 from admin_dashboard.screens.payload_preview_dialog import PayloadPreviewDialog
-
+from admin_dashboard.group_registry import group_registry
+from admin_dashboard.screens.new_group_dialog import NewGroupDialog
+from admin_dashboard.workers.server_worker import ServerWorker
+from admin_dashboard.cross_workspace_group_sync import CrossWorkspaceGroupSync
 
 class SessionManagerPage(QWidget):
     def __init__(self, fonts, project_manager):
@@ -51,6 +54,12 @@ class SessionManagerPage(QWidget):
         self.sub_stack.addWidget(self.page_group_hub)     # Index 0
         self.sub_stack.addWidget(self.page_group_detail)  # Index 1
         self.sub_stack.addWidget(self.page_monitoring)    # Index 2
+
+        # Observer pattern: any workspace that adds/removes a group
+        # refreshes this hub too, with no direct coupling between pages.
+        group_registry.group_added.connect(lambda _name: self.refresh_group_hub())
+        group_registry.group_removed.connect(lambda _name: self.refresh_group_hub())
+        group_registry.group_renamed.connect(lambda _old, _new: self.refresh_group_hub())
 
     def reset_to_hub(self):
         """Called by the dashboard whenever this page becomes active again."""
@@ -77,6 +86,13 @@ class SessionManagerPage(QWidget):
         btn_add_group.clicked.connect(self.create_new_group)
         content_layout.addWidget(btn_add_group)
 
+        self.empty_state_label = QLabel("No groups yet — tap \"+ ADD NEW GROUP\" above to create your first one.")
+        self.empty_state_label.setFont(QFont(self.fonts.mono, 11))
+        self.empty_state_label.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent; border: none;")
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setVisible(False)
+        content_layout.addWidget(self.empty_state_label)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background: transparent; border: none;")
@@ -90,66 +106,124 @@ class SessionManagerPage(QWidget):
         return page
 
     def refresh_group_hub(self):
-        """Reads the DB (via ProjectManager) and draws a card for each existing group."""
+        """Reads the global registry and draws a card for each existing group."""
         for i in reversed(range(self.groups_layout.count())):
             widget = self.groups_layout.itemAt(i).widget()
             if widget:
                 widget.setParent(None)
 
-        if not self.project_manager.is_active:
-            return
-
-        try:
-            groups = self.project_manager.get_groups()
-        except Exception as e:
-            print(f"Error loading groups: {e}")
-            return
+        group_names = group_registry.list_groups()
+        self.empty_state_label.setVisible(not group_names)
 
         row, col = 0, 0
-        for group_name, count in groups:
-            card = self._build_group_card(group_name, count)
+        for group_name in group_names:
+            card = self._build_group_card(group_name)
             self.groups_layout.addWidget(card, row, col)
             col += 1
             if col > 2:
                 col = 0
                 row += 1
 
-    def _build_group_card(self, group_name, count):
+    def _build_group_card(self, group_name):
         card = QPushButton()
         card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.setFixedSize(300, 120)
+        card.setFixedSize(300, 90)
         card.setStyleSheet(f"""
             QPushButton {{
                 background-color: {BG_CARD}; color: {SKY_AQUA};
-                border: 2px solid {TRUE_AZURE}; border-radius: 12px; text-align: left; padding: 15px;
+                border: 2px solid {TRUE_AZURE}; border-radius: 12px; text-align: left; padding: 0px;
             }}
             QPushButton:hover {{ border: 2px solid {CLOUDY_SKY}; background-color: rgba(72, 149, 239, 0.1); }}
         """)
-
         card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 20, 18, 20)
+        card_layout.setSpacing(6)
+
+        title_row = QHBoxLayout()
         title = QLabel(group_name.upper())
         title.setFont(QFont(self.fonts.orbitron, 14, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {SKY_AQUA}; background: transparent; border: none;")
 
-        sub = QLabel(f"{count} Students Enrolled")
-        sub.setFont(QFont(self.fonts.mono, 10))
-        sub.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent; border: none;")
+        btn_rename = QPushButton("✎")
+        btn_rename.setFixedSize(34, 34)
+        btn_rename.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_rename.setStyleSheet(
+            f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
+            f"border: none; font-weight: bold; font-size: 16px; padding: 0px; text-align: center; }} "
+            f"QPushButton:hover {{ color: {CLOUDY_SKY}; }}"
+        )
+        btn_rename.clicked.connect(lambda checked, g=group_name: self.rename_group(g))
 
-        card_layout.addWidget(title)
-        card_layout.addWidget(sub)
+        btn_delete = QPushButton("✕")
+        btn_delete.setFixedSize(34, 34)
+        btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_delete.setStyleSheet(
+            f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
+            f"border: none; font-weight: bold; font-size: 16px; padding: 0px; text-align: center; }} "
+            f"QPushButton:hover {{ color: {WARN_COLOR}; }}"
+        )
+        btn_delete.clicked.connect(lambda checked, g=group_name: self.delete_group(g))
+
+        title_row.addWidget(title)
+        title_row.addStretch()
+        title_row.addWidget(btn_rename)
+        title_row.addWidget(btn_delete)
+
+        subtitle = QLabel("Tap to manage")
+        subtitle.setFont(QFont(self.fonts.mono, 9))
+        subtitle.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent; border: none;")
+
+        card_layout.addLayout(title_row)
+        card_layout.addWidget(subtitle)
 
         card.clicked.connect(lambda checked, g=group_name: self.open_group_detail(g))
         apply_card_shadow(card)
         return card
 
     def create_new_group(self):
-        if not self.project_manager.is_active:
-            QMessageBox.warning(self, "Error", "No active workspace. Create/Open a project first.")
+        clean_name, ok = NewGroupDialog.get_group_name(self.fonts.orbitron, self.fonts.mono, parent=self)
+        if not (ok and clean_name):
             return
 
-        group_name, ok = QInputDialog.getText(self, "New Group", "Enter Group Identifier (e.g., Sidi Bishr 10 AM):")
-        if ok and group_name.strip():
-            self.open_group_detail(group_name.strip())
+        if not group_registry.add_group(clean_name):
+            QMessageBox.information(self, "Already Exists", f"A group named '{clean_name}' already exists.")
+        # Card appears via the group_added signal → refresh_group_hub().
+        # Admin stays on the hub and opens the card themselves when ready.
+
+    def delete_group(self, group_name):
+        reply = QMessageBox.question(
+            self, "Delete Group",
+            f"Delete '{group_name}'?\n\n"
+            "This removes it from the groups list AND permanently deletes its "
+            "roster from every workspace it was imported into. This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        CrossWorkspaceGroupSync.purge_group_everywhere(group_name)
+        group_registry.remove_group(group_name)
+
+        if self.active_group_name == group_name:
+            self.active_group_name = None
+            self.sub_stack.setCurrentIndex(0)
+
+    def rename_group(self, group_name):
+        new_name, ok = NewGroupDialog.get_group_name(
+            self.fonts.orbitron, self.fonts.mono, parent=self,
+            title="Rename Group", initial_text=group_name,
+        )
+        if not (ok and new_name and new_name != group_name):
+            return
+
+        if not group_registry.rename_group(group_name, new_name):
+            QMessageBox.information(self, "Already Exists", f"A group named '{new_name}' already exists.")
+            return
+
+        CrossWorkspaceGroupSync.rename_group_everywhere(group_name, new_name)
+        if self.active_group_name == group_name:
+            self.active_group_name = new_name
+            self.detail_group_title.setText(new_name.upper())
 
     # ==================================================================
     # SCREEN 1: GROUP DETAIL
@@ -177,32 +251,31 @@ class SessionManagerPage(QWidget):
         header_row.addWidget(self.detail_group_title)
         content_layout.addLayout(header_row)
 
-        roster_row = QHBoxLayout()
-        btn_load_excel = QPushButton("📂 IMPORT EXCEL ROSTER(S)")
-        btn_load_excel.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
-        btn_load_excel.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_load_excel.setStyleSheet(
-            f"QPushButton {{ background-color: {BG_PANEL}; color: {CLOUDY_SKY}; "
-            f"border: 2px solid {CLOUDY_SKY}; border-radius: 8px; padding: 15px; }} "
-            f"QPushButton:hover {{ background-color: {CLOUDY_SKY}; color: #000000; }}"
-        )
-        btn_load_excel.clicked.connect(self.load_group_excel)
+        readiness_label = QLabel("SESSION READINESS")
+        readiness_label.setFont(QFont(self.fonts.orbitron, 11, QFont.Weight.Bold))
+        readiness_label.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px;")
+        content_layout.addWidget(readiness_label)
 
-        self.loaded_files_list = QListWidget()
-        self.loaded_files_list.setFixedHeight(100)
-        self.loaded_files_list.setStyleSheet(
-            f"QListWidget {{ background-color: {BG_DEEP}; color: {TEXT_MUTED}; "
-            f"border: 1px solid {VIVID_ROYAL}; border-radius: 8px; padding: 5px; }}"
-        )
+        self.readiness_list = QListWidget()
+        self.readiness_list.setStyleSheet(f"""
+                   QListWidget {{
+                       background-color: {BG_PANEL}; color: {TEXT_MUTED};
+                       border: 2px solid {TRUE_AZURE}; border-radius: 12px; padding: 10px;
+                   }}
+                   QListWidget::item {{ padding: 6px 4px; }}
+               """)
+        content_layout.addWidget(self.readiness_list, stretch=1)
 
-        roster_row.addWidget(btn_load_excel)
-        roster_row.addWidget(self.loaded_files_list)
-        content_layout.addLayout(roster_row)
-
-        self.card_session_students = StatCard(
-            "Group Roster", "0", SKY_AQUA, self.fonts.orbitron, self.fonts.mono, "Total loaded for this group"
+        self.btn_export_detail = QPushButton("📊 EXPORT RESULTS")
+        self.btn_export_detail.setFont(QFont(self.fonts.orbitron, 11, QFont.Weight.Bold))
+        self.btn_export_detail.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_export_detail.setStyleSheet(
+            f"QPushButton {{ background-color: {BG_PANEL}; color: {ELECTRIC_SAPPHIRE}; "
+            f"border: 2px solid {ELECTRIC_SAPPHIRE}; border-radius: 8px; padding: 12px; }} "
+            f"QPushButton:hover {{ background-color: {ELECTRIC_SAPPHIRE}; color: #ffffff; }}"
         )
-        content_layout.addWidget(self.card_session_students)
+        self.btn_export_detail.clicked.connect(self.export_group_results)
+        content_layout.addWidget(self.btn_export_detail)
 
         self.btn_start_server = QPushButton("🚀 START LIVE GRADING")
         self.btn_start_server.setFont(QFont(self.fonts.orbitron, 16, QFont.Weight.Black))
@@ -211,7 +284,9 @@ class SessionManagerPage(QWidget):
         self.btn_start_server.setStyleSheet(
             f"QPushButton {{ background-color: {BG_PANEL}; color: {NEON_PINK}; "
             f"border: 3px solid {NEON_PINK}; border-radius: 12px; letter-spacing: 2px; }} "
-            f"QPushButton:hover {{ background-color: {NEON_PINK}; color: #ffffff; }}"
+            f"QPushButton:hover {{ background-color: {NEON_PINK}; color: #ffffff; }} "
+            f"QPushButton:disabled {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; "
+            f"border: 3px solid {TEXT_MUTED}; }}"
         )
         self.btn_start_server.clicked.connect(self.start_live_grading_session)
         content_layout.addWidget(self.btn_start_server)
@@ -221,28 +296,27 @@ class SessionManagerPage(QWidget):
     def open_group_detail(self, group_name):
         self.active_group_name = group_name
         self.detail_group_title.setText(group_name.upper())
-        self.loaded_files_list.clear()
-
-        count = self.project_manager.get_group_student_count(group_name)
-        self.card_session_students.update_value(str(count))
+        self._refresh_readiness()
         self.sub_stack.setCurrentIndex(1)
 
-    def load_group_excel(self):
-        options = QFileDialog.Option.DontUseNativeDialog
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Group Roster Excel", "", "Excel Files (*.xlsx *.xls)", options=options
-        )
-        if not file_path:
+    def _refresh_readiness(self):
+        """Surfaces the same checks start_live_grading_session() enforces,
+        up front, so the admin sees blockers before pressing the button
+        instead of after."""
+        self.readiness_list.clear()
+
+        if not self.project_manager.is_active:
+            self.readiness_list.addItem("⚠ No active workspace.")
+            self.btn_start_server.setEnabled(False)
             return
 
-        try:
-            total_inserted, total_in_group = self.project_manager.import_excel_roster(
-                file_path, self.active_group_name
-            )
-            self.card_session_students.update_value(str(total_in_group))
-            self.loaded_files_list.addItem(f"✔ {os.path.basename(file_path)} (+{total_inserted} records)")
-        except Exception as e:
-            QMessageBox.critical(self, "Data Import Error", str(e))
+        problems = self.project_manager.get_blueprint_readiness()
+        if not problems:
+            self.readiness_list.addItem("✅ Exam blueprint ready — you can start live grading.")
+        else:
+            for problem in problems:
+                self.readiness_list.addItem(f"⚠ {problem}")
+        self.btn_start_server.setEnabled(not problems)
 
     # ==================================================================
     # SCREEN 2: LIVE MONITORING
@@ -283,6 +357,15 @@ class SessionManagerPage(QWidget):
         return page
 
     def start_live_grading_session(self):
+
+        if self.server_thread is not None and self.server_thread.isRunning():
+            QMessageBox.warning(
+                self, "Session Already Running",
+                "A grading session is already live. Stop it from the monitoring "
+                "screen before starting another one."
+            )
+            return
+
         try:
             problems = self.project_manager.get_blueprint_readiness()
             if problems:
@@ -292,19 +375,13 @@ class SessionManagerPage(QWidget):
                 )
                 return
 
-            roster = self.project_manager.get_roster(self.active_group_name)
-            if not roster:
-                QMessageBox.critical(
-                    self, "Error", f"No roster found for '{self.active_group_name}'! Import Excel first."
-                )
-                return
-
             master_packet = self.project_manager.build_sync_packet(self.active_group_name)
 
             preview = PayloadPreviewDialog(master_packet, self.fonts.orbitron, self.fonts.mono, parent=self)
             if preview.exec() != QDialog.DialogCode.Accepted:
                 return
 
+            self.server_thread = ServerWorker(master_packet)
             self.server_thread.log_signal.connect(self.log_server_message)
             self.server_thread.start()
 
@@ -320,6 +397,7 @@ class SessionManagerPage(QWidget):
 
     def stop_server_and_return(self):
         if self.server_thread is not None and self.server_thread.isRunning():
+            self.server_thread.stop()
             self.server_thread.wait()
 
         self.refresh_group_hub()

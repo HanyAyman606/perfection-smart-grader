@@ -17,6 +17,7 @@ import json
 import sqlite3
 from admin_dashboard.recent_projects import recent_projects
 from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY
+from admin_dashboard.group_registry import group_registry
 
 
 
@@ -79,7 +80,28 @@ class ProjectManager:
         self.project_name = data.get("project_name", "Unknown Exam")
         self.project_dir = dir_path
         recent_projects.touch(self.project_name, dir_path)
+        self._purge_orphaned_groups()
         return True
+
+    def _purge_orphaned_groups(self):
+        """Self-healing safety net: strips any roster rows for group names
+        that no longer exist in the global registry — covers workspaces that
+        fell out of recent_projects' history (or were moved) before a global
+        delete could reach them."""
+        if not os.path.exists(self.db_path):
+            return
+
+        known_names = set(group_registry.list_groups())
+        conn, cursor = self._connect()
+        cursor.execute("SELECT DISTINCT group_name FROM students WHERE group_name IS NOT NULL")
+        stored_names = {row[0] for row in cursor.fetchall()}
+
+        orphans = stored_names - known_names
+        for name in orphans:
+            cursor.execute("DELETE FROM students WHERE group_name = ?", (name,))
+        if orphans:
+            conn.commit()
+        conn.close()
 
     # ------------------------------------------------------------------
     # Config (blueprint / template) read-modify-write
@@ -163,63 +185,6 @@ class ProjectManager:
         conn.close()
         return [(name, count) for name, count in rows if name]
 
-    def get_group_student_count(self, group_name: str) -> int:
-        if not os.path.exists(self.db_path):
-            return 0
-        conn, cursor = self._connect()
-        cursor.execute("SELECT COUNT(*) FROM students WHERE group_name = ?", (group_name,))
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count
-
-    def import_excel_roster(self, file_path: str, group_name: str) -> tuple[int, int]:
-        """Parses an Excel roster and inserts/updates students for group_name.
-        Returns (rows_inserted_this_import, total_students_now_in_group)."""
-        import pandas as pd
-
-        df = pd.read_excel(file_path)
-        df.columns = [str(col).lower().strip() for col in df.columns]
-
-        if "id" not in df.columns or "name" not in df.columns:
-            raise ValueError("Excel file must contain 'id' and 'name' columns.")
-
-        df_clean = df.dropna(subset=["id"]).copy()
-        if "s6" in df_clean.columns:
-            df_clean["is_present"] = df_clean["s6"].apply(
-                lambda x: 1 if pd.notnull(x) and str(x).strip() == "1" else 0
-            )
-        else:
-            df_clean["is_present"] = 1
-
-        conn, cursor = self._connect()
-        total_inserted = 0
-        for _, row in df_clean.iterrows():
-            student_id = str(row["id"]).strip()
-            student_name = str(row["name"]).strip()
-            is_present = int(row["is_present"])
-            cursor.execute(
-                "INSERT OR REPLACE INTO students (student_id, student_name, is_present, group_name) "
-                "VALUES (?, ?, ?, ?)",
-                (student_id, student_name, is_present, group_name),
-            )
-            total_inserted += 1
-        conn.commit()
-
-        cursor.execute("SELECT COUNT(*) FROM students WHERE group_name = ?", (group_name,))
-        total_in_group = cursor.fetchone()[0]
-        conn.close()
-        return total_inserted, total_in_group
-
-    def get_roster(self, group_name: str) -> list[dict]:
-        """Returns the roster list shape needed for the sync packet sent to phones."""
-        conn, cursor = self._connect(row_factory=sqlite3.Row)
-        cursor.execute(
-            "SELECT student_id, student_name, is_present FROM students WHERE group_name = ?",
-            (group_name,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [{"id": r["student_id"], "name": r["student_name"], "present": r["is_present"]} for r in rows]
 
     def export_group_to_excel(self, group_name: str, save_path: str):
         import pandas as pd
@@ -233,7 +198,6 @@ class ProjectManager:
         conn.close()
         df["Status"] = df["Status"].apply(lambda x: "Present" if x == 1 else "Absent")
         df.to_excel(save_path, index=False)
-
     # ------------------------------------------------------------------
     # Sync packet sent to mobile clients over the socket
     # ------------------------------------------------------------------
@@ -249,7 +213,6 @@ class ProjectManager:
             "template_path": exam_config.get("template_path", ""),
             "roi_coordinates": exam_config.get("roi_coordinates", {}),
             "group_name": group_name,
-            "roster": self.get_roster(group_name),
             "answer_versions": exam_config.get("answer_versions", [SINGLE_VERSION_KEY]),
             "model_answers": exam_config.get("model_answers", {}),      # {version: {"1": "A", ...}}
             "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}

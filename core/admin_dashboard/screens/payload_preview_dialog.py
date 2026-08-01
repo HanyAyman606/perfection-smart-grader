@@ -3,8 +3,8 @@ screens/payload_preview_dialog.py
 ------------------------------------
 Read-only preview of the exact sync packet about to be broadcast to
 mobile clients before "Start Live Grading" opens the socket. Cheaper to
-catch a mistake here (wrong mode, missing answers, empty roster) than
-after graders have already started scanning.
+catch a mistake here (wrong mode, missing answers) than after graders
+have already started scanning.
 """
 
 import json
@@ -62,7 +62,6 @@ class PayloadPreviewDialog(QDialog):
         voided_by_version = packet.get("voided_questions", {})
         has_essays = packet.get("has_essays", False)
         essay_map = packet.get("essay_points_map", {})
-        roster = packet.get("roster", [])
         template_path = packet.get("template_path", "")
 
         rows = [
@@ -80,9 +79,7 @@ class PayloadPreviewDialog(QDialog):
                                  f"{mcq_count - len(answers) - len(voided)} missing"))
         rows += [
             ("Essay Questions", f"{len(essay_map)} question(s)" if has_essays else "Not included"),
-            ("ROI Template", "Saved ✔" if template_path else "⚠ Not saved"),
-            ("Roster", f"{len(roster)} student(s) loaded"),
-        ]
+            ("ROI Template", "Saved ✔" if template_path else "⚠ Not saved"),        ]
         for label, value in rows:
             content_layout.addWidget(self._build_row(label, value, mono, orbitron))
 
