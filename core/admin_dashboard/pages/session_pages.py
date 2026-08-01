@@ -27,7 +27,6 @@ from admin_dashboard.theme import (
 )
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.common import StatCard, apply_card_shadow
-from admin_dashboard.workers.server_worker import ServerWorker
 from admin_dashboard.screens.payload_preview_dialog import PayloadPreviewDialog
 
 
@@ -306,7 +305,6 @@ class SessionManagerPage(QWidget):
             if preview.exec() != QDialog.DialogCode.Accepted:
                 return
 
-            self.server_thread = ServerWorker(master_packet)
             self.server_thread.log_signal.connect(self.log_server_message)
             self.server_thread.start()
 
@@ -321,11 +319,8 @@ class SessionManagerPage(QWidget):
         self.monitor_log.scrollToItem(self.monitor_log.item(self.monitor_log.count() - 1))
 
     def stop_server_and_return(self):
-        """Kills the socket thread and goes back to the Group Hub."""
         if self.server_thread is not None and self.server_thread.isRunning():
-            self.server_thread.terminate()  # forcefully stops the loop
             self.server_thread.wait()
-            self.log_server_message("SERVER SHUTDOWN.")
 
         self.refresh_group_hub()
         self.sub_stack.setCurrentIndex(0)
