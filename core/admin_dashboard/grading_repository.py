@@ -48,6 +48,7 @@ GRADES_TABLE_SQL = """
         essay_total REAL DEFAULT 0,
         final_score REAL NOT NULL,
         answer_version TEXT,
+        group_type TEXT,
         mistakes_log TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions (session_id),
@@ -79,8 +80,30 @@ class GradingRepository:
         conn = self._connect()
         conn.execute(SESSIONS_TABLE_SQL)
         conn.execute(GRADES_TABLE_SQL)
+        self._ensure_group_type_column(conn)
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def ensure_grades_schema(db_path: str):
+        """Callable without a session_id — for read paths (like export)
+        that need the schema current but aren't starting a grading session."""
+        conn = sqlite3.connect(db_path)
+        conn.execute(SESSIONS_TABLE_SQL)
+        conn.execute(GRADES_TABLE_SQL)
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(grades)")}
+        if "group_type" not in existing_cols:
+            conn.execute("ALTER TABLE grades ADD COLUMN group_type TEXT")
+        conn.commit()
+        conn.close()
+
+    def _ensure_group_type_column(self, conn):
+        """Migration for grades tables created before group_type existed —
+        CREATE TABLE IF NOT EXISTS alone won't add a column to a table
+        that's already there."""
+        existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(grades)")}
+        if "group_type" not in existing_cols:
+            conn.execute("ALTER TABLE grades ADD COLUMN group_type TEXT")
 
     def start_session(self, group_name: str):
         """Call once when 'Start Live Grading' is confirmed — registers
@@ -114,25 +137,27 @@ class GradingRepository:
         }
 
     def save_grade(self, student_id: str, mcq_score: float, essay_total: float,
-                    total_score: float, mistakes: list, answer_version: Optional[str]):
+                    total_score: float, mistakes: list, answer_version: Optional[str],
+                    group_type: Optional[str] = None):
         conn = self._connect()
         conn.execute(
             "INSERT INTO grades (session_id, student_id, mcq_score, essay_total, "
-            "final_score, answer_version, mistakes_log) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "final_score, answer_version, group_type, mistakes_log) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (self.session_id, student_id, mcq_score, essay_total, total_score,
-             answer_version, json.dumps(mistakes)),
+             answer_version, group_type, json.dumps(mistakes)),
         )
         conn.commit()
         conn.close()
 
     def overwrite_grade(self, student_id: str, mcq_score: float, essay_total: float,
-                         total_score: float, mistakes: list, answer_version: Optional[str]):
+                         total_score: float, mistakes: list, answer_version: Optional[str],
+                         group_type: Optional[str] = None):
         conn = self._connect()
         conn.execute(
             "UPDATE grades SET mcq_score=?, essay_total=?, final_score=?, "
-            "answer_version=?, mistakes_log=?, timestamp=CURRENT_TIMESTAMP "
+            "answer_version=?, group_type=?, mistakes_log=?, timestamp=CURRENT_TIMESTAMP "
             "WHERE session_id=? AND student_id=?",
-            (mcq_score, essay_total, total_score, answer_version, json.dumps(mistakes),
+            (mcq_score, essay_total, total_score, answer_version, group_type, json.dumps(mistakes),
              self.session_id, student_id),
         )
         conn.commit()
@@ -148,6 +173,58 @@ class GradingRepository:
         conn.close()
 
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def get_group_grades(db_path: str, group_name: str) -> list[dict]:
+        """Every grade ever saved for this group, across all sessions —
+        used by the Excel export. Ordered by answer_version first (so
+        M's/N's/C's group together in the sheet), then student_id."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute(
+            "SELECT g.student_id, g.mcq_score, g.essay_total, g.final_score, "
+            "g.answer_version, g.timestamp "
+            "FROM grades g JOIN sessions s ON g.session_id = s.session_id "
+            "WHERE s.group_name = ? "
+            "ORDER BY g.answer_version, g.student_id",
+            (group_name,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                "student_id": r[0], "mcq_score": r[1], "essay_total": r[2],
+                "final_score": r[3], "answer_version": r[4], "timestamp": r[5],
+            }
+            for r in rows
+        ]
+
+
+    @staticmethod
+    def get_group_grades(db_path: str, group_name: str) -> list[dict]:
+        """Every grade ever saved for this group's sessions, sorted by
+        group_type first (M's together, then N's, then W's...) since
+        one grading session's location can contain students from several
+        administrative groups — group_type is a per-student value read
+        off their sheet, not the same thing as the session's group_name."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute(
+            "SELECT g.student_id, g.group_type, g.answer_version, g.mcq_score, "
+            "g.essay_total, g.final_score, g.timestamp "
+            "FROM grades g JOIN sessions s ON g.session_id = s.session_id "
+            "WHERE s.group_name = ? "
+            "ORDER BY g.group_type IS NULL, g.group_type, g.student_id",
+            (group_name,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            {
+                "student_id": r[0], "group_type": r[1], "answer_version": r[2],
+                "mcq_score": r[3], "essay_total": r[4], "final_score": r[5], "timestamp": r[6],
+            }
+            for r in rows
+        ]
+
     def get_session_grades(self) -> list[dict]:
         """Used by export_group_results / a future results view — every
         saved grade for this session, newest first."""

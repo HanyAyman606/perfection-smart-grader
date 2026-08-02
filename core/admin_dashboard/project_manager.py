@@ -84,10 +84,13 @@ class ProjectManager:
         return True
 
     def _purge_orphaned_groups(self):
-        """Self-healing safety net: strips any roster rows for group names
-        that no longer exist in the global registry — covers workspaces that
-        fell out of recent_projects' history (or were moved) before a global
-        delete could reach them."""
+        """Self-healing safety net: strips any roster/grade/session rows for
+        group names that no longer exist in the global registry — covers
+        workspaces that fell out of recent_projects' history (or were moved)
+        before a global delete could reach them. Mirrors
+        CrossWorkspaceGroupSync.purge_group_everywhere()'s table coverage
+        so an orphaned group can't leave grade history behind just because
+        it was cleaned up this way instead of via explicit delete."""
         if not os.path.exists(self.db_path):
             return
 
@@ -96,11 +99,31 @@ class ProjectManager:
         cursor.execute("SELECT DISTINCT group_name FROM students WHERE group_name IS NOT NULL")
         stored_names = {row[0] for row in cursor.fetchall()}
 
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('grades', 'sessions')"
+        )
+        existing_tables = {row[0] for row in cursor.fetchall()}
+        if "sessions" in existing_tables:
+            cursor.execute("SELECT DISTINCT group_name FROM sessions WHERE group_name IS NOT NULL")
+            stored_names |= {row[0] for row in cursor.fetchall()}
+
         orphans = stored_names - known_names
+        if not orphans:
+            conn.close()
+            return
+
         for name in orphans:
             cursor.execute("DELETE FROM students WHERE group_name = ?", (name,))
-        if orphans:
-            conn.commit()
+            if "sessions" in existing_tables and "grades" in existing_tables:
+                cursor.execute(
+                    "DELETE FROM grades WHERE session_id IN "
+                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                    (name,),
+                )
+            if "sessions" in existing_tables:
+                cursor.execute("DELETE FROM sessions WHERE group_name = ?", (name,))
+
+        conn.commit()
         conn.close()
 
     # ------------------------------------------------------------------
@@ -188,15 +211,14 @@ class ProjectManager:
 
     def export_group_to_excel(self, group_name: str, save_path: str):
         import pandas as pd
+        from admin_dashboard.grading_repository import GradingRepository
 
-        conn = sqlite3.connect(self.db_path)
-        df = pd.read_sql_query(
-            "SELECT student_id AS ID, student_name AS Name, is_present AS Status "
-            "FROM students WHERE group_name = ?",
-            conn, params=(group_name,),
-        )
-        conn.close()
-        df["Status"] = df["Status"].apply(lambda x: "Present" if x == 1 else "Absent")
+        GradingRepository.ensure_grades_schema(self.db_path)
+        grades = GradingRepository.get_group_grades(self.db_path, group_name)
+        df = pd.DataFrame(grades, columns=[
+            "student_id", "group_type", "answer_version", "mcq_score", "essay_total", "final_score", "timestamp"
+        ])
+        df.columns = ["Student ID", "Group Type", "Exam Version", "MCQ Score", "Essay Score", "Final Score", "Timestamp"]
         df.to_excel(save_path, index=False)
     # ------------------------------------------------------------------
     # Sync packet sent to mobile clients over the socket
@@ -217,6 +239,12 @@ class ProjectManager:
             "model_answers": exam_config.get("model_answers", {}),      # {version: {"1": "A", ...}}
             "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}
         }
+
+    def get_session_password(self) -> str:
+        return self.load_config().get("session_password", "12345678")
+
+    def set_session_password(self, password: str):
+        self._update_config(session_password=password)
 
     def get_blueprint_readiness(self) -> list[str]:
         """Returns human-readable problems blocking a meaningful sync

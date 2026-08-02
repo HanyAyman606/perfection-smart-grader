@@ -30,8 +30,11 @@ from admin_dashboard.widgets.common import StatCard, apply_card_shadow
 from admin_dashboard.screens.payload_preview_dialog import PayloadPreviewDialog
 from admin_dashboard.group_registry import group_registry
 from admin_dashboard.screens.new_group_dialog import NewGroupDialog
-from admin_dashboard.workers.server_worker import ServerWorker
+from admin_dashboard.workers.websocket_server import WebSocketServer
+from admin_dashboard.grading_repository import new_session_id
 from admin_dashboard.cross_workspace_group_sync import CrossWorkspaceGroupSync
+from admin_dashboard.screens.session_password_dialog import SessionPasswordDialog
+from admin_dashboard.screens.dialogs import show_info, show_warning, show_error, ask_yes_no, save_file_dialog
 
 class SessionManagerPage(QWidget):
     def __init__(self, fonts, project_manager):
@@ -186,20 +189,18 @@ class SessionManagerPage(QWidget):
             return
 
         if not group_registry.add_group(clean_name):
-            QMessageBox.information(self, "Already Exists", f"A group named '{clean_name}' already exists.")
+            show_info(self, self.fonts.orbitron, self.fonts.mono, "Already Exists",
+                      f"A group named '{clean_name}' already exists.")
         # Card appears via the group_added signal → refresh_group_hub().
         # Admin stays on the hub and opens the card themselves when ready.
 
     def delete_group(self, group_name):
-        reply = QMessageBox.question(
-            self, "Delete Group",
-            f"Delete '{group_name}'?\n\n"
-            "This removes it from the groups list AND permanently deletes its "
-            "roster from every workspace it was imported into. This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+        confirmed = ask_yes_no(self, self.fonts.orbitron, self.fonts.mono,         "Delete Group",
+        f"Delete '{group_name}'?\n\n"
+        "This removes it from the groups list AND permanently deletes its "
+        "roster from every workspace it was imported into. This cannot be undone.")
+
+        if not confirmed: return
 
         CrossWorkspaceGroupSync.purge_group_everywhere(group_name)
         group_registry.remove_group(group_name)
@@ -217,7 +218,7 @@ class SessionManagerPage(QWidget):
             return
 
         if not group_registry.rename_group(group_name, new_name):
-            QMessageBox.information(self, "Already Exists", f"A group named '{new_name}' already exists.")
+            show_info(self, self.fonts.orbitron, self.fonts.mono, "Already Exists", f"A group named '{new_name}' already exists.")
             return
 
         CrossWorkspaceGroupSync.rename_group_everywhere(group_name, new_name)
@@ -277,6 +278,17 @@ class SessionManagerPage(QWidget):
         self.btn_export_detail.clicked.connect(self.export_group_results)
         content_layout.addWidget(self.btn_export_detail)
 
+        self.btn_set_password = QPushButton("🔒 SET PHONE SESSION PASSWORD")
+        self.btn_set_password.setFont(QFont(self.fonts.orbitron, 11, QFont.Weight.Bold))
+        self.btn_set_password.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_set_password.setStyleSheet(
+            f"QPushButton {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; "
+            f"border: 2px solid {TRUE_AZURE}; border-radius: 8px; padding: 10px; }} "
+            f"QPushButton:hover {{ background-color: {TRUE_AZURE}; color: #ffffff; }}"
+        )
+        self.btn_set_password.clicked.connect(self.open_session_password_dialog)
+        content_layout.addWidget(self.btn_set_password)
+
         self.btn_start_server = QPushButton("🚀 START LIVE GRADING")
         self.btn_start_server.setFont(QFont(self.fonts.orbitron, 16, QFont.Weight.Black))
         self.btn_start_server.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -298,6 +310,13 @@ class SessionManagerPage(QWidget):
         self.detail_group_title.setText(group_name.upper())
         self._refresh_readiness()
         self.sub_stack.setCurrentIndex(1)
+
+    def open_session_password_dialog(self):
+        if not self.project_manager.is_active:
+            show_warning(self, self.fonts.orbitron, self.fonts.mono, "Error", "No active workspace.")
+            return
+        dialog = SessionPasswordDialog(self.project_manager, self.fonts.orbitron, self.fonts.mono, self)
+        dialog.exec()
 
     def _refresh_readiness(self):
         """Surfaces the same checks start_live_grading_session() enforces,
@@ -325,13 +344,45 @@ class SessionManagerPage(QWidget):
         page = QWidget()
         content_layout = build_page_shell(page, "Live Broadcast Monitor", NEON_PINK, self.fonts.orbitron)
 
+        stats_row = QHBoxLayout()
+        self.card_scores_saved = StatCard(
+            "Scores Saved", "0", SKY_AQUA, self.fonts.orbitron, self.fonts.mono, "This session"
+        )
+        stats_row.addWidget(self.card_scores_saved)
+        content_layout.addLayout(stats_row)
+
+        split_row = QHBoxLayout()
+
+        log_col = QVBoxLayout()
+        log_label = QLabel("ACTIVITY LOG")
+        log_label.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
+        log_label.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px;")
         self.monitor_log = QListWidget()
         self.monitor_log.setStyleSheet(
             f"QListWidget {{ background-color: {BG_DEEP}; color: {NEON_PINK}; "
             f"border: 1px solid {TRUE_AZURE}; border-radius: 8px; padding: 15px; "
             f"font-family: Consolas; font-size: 13px; }}"
         )
-        content_layout.addWidget(self.monitor_log)
+        log_col.addWidget(log_label)
+        log_col.addWidget(self.monitor_log)
+
+        phones_col = QVBoxLayout()
+        phones_label = QLabel("CONNECTED PHONES")
+        phones_label.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
+        phones_label.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px;")
+        self.phones_list = QListWidget()
+        self.phones_list.setFixedWidth(240)
+        self.phones_list.setStyleSheet(
+            f"QListWidget {{ background-color: {BG_DEEP}; color: {SKY_AQUA}; "
+            f"border: 1px solid {TRUE_AZURE}; border-radius: 8px; padding: 10px; "
+            f"font-family: Consolas; font-size: 12px; }}"
+        )
+        phones_col.addWidget(phones_label)
+        phones_col.addWidget(self.phones_list)
+
+        split_row.addLayout(log_col, stretch=1)
+        split_row.addLayout(phones_col)
+        content_layout.addLayout(split_row)
 
         btn_row = QHBoxLayout()
         btn_stop = QPushButton("🛑 STOP SERVER")
@@ -359,8 +410,8 @@ class SessionManagerPage(QWidget):
     def start_live_grading_session(self):
 
         if self.server_thread is not None and self.server_thread.isRunning():
-            QMessageBox.warning(
-                self, "Session Already Running",
+            show_warning(
+                self, self.fonts.orbitron, self.fonts.mono, "Session Already Running",
                 "A grading session is already live. Stop it from the monitoring "
                 "screen before starting another one."
             )
@@ -369,8 +420,8 @@ class SessionManagerPage(QWidget):
         try:
             problems = self.project_manager.get_blueprint_readiness()
             if problems:
-                QMessageBox.critical(
-                    self, "Exam Not Ready",
+                show_error(
+                    self, self.fonts.orbitron, self.fonts.mono, "Exam Not Ready",
                     "This exam isn't ready to sync yet:\n\n" + "\n".join(f"• {p}" for p in problems)
                 )
                 return
@@ -381,19 +432,44 @@ class SessionManagerPage(QWidget):
             if preview.exec() != QDialog.DialogCode.Accepted:
                 return
 
-            self.server_thread = ServerWorker(master_packet)
+            self.server_thread = WebSocketServer(
+                packet_data=master_packet,
+                db_path=self.project_manager.db_path,
+                session_id=new_session_id(),
+                group_name=self.active_group_name,
+                session_password=self.project_manager.get_session_password(),
+            )
             self.server_thread.log_signal.connect(self.log_server_message)
+            self.server_thread.phone_connected.connect(self._on_phone_status_changed)
+            self.server_thread.phone_disconnected.connect(self._on_phone_status_changed)
+            self.server_thread.score_saved.connect(self._on_score_saved)
             self.server_thread.start()
 
+            self._scores_saved_count = 0
+            self.card_scores_saved.update_value("0")
             self.monitor_log.clear()
+            self.phones_list.clear()
             self.sub_stack.setCurrentIndex(2)
 
         except Exception as e:
-            QMessageBox.critical(self, "Initialization Error", str(e))
+            show_error(self, self.fonts.orbitron, self.fonts.mono, "Initialization Error", str(e))
 
     def log_server_message(self, message):
         self.monitor_log.addItem(message)
         self.monitor_log.scrollToItem(self.monitor_log.item(self.monitor_log.count() - 1))
+
+    def _on_phone_status_changed(self, _phone_name):
+        """Connected/disconnected both just mean 'redraw from the source
+        of truth' — WebSocketServer.get_connected_phones_snapshot() is
+        cheap and always correct, so no need to hand-patch list items."""
+        self.phones_list.clear()
+        for phone in self.server_thread.get_connected_phones_snapshot():
+            status_icon = "🟢" if phone["status"] == "connected" else "⚪"
+            self.phones_list.addItem(f"{status_icon} {phone['name']} — {phone['scan_count']} scanned")
+
+    def _on_score_saved(self, _student_id, _score):
+        self._scores_saved_count += 1
+        self.card_scores_saved.update_value(str(self._scores_saved_count))
 
     def stop_server_and_return(self):
         if self.server_thread is not None and self.server_thread.isRunning():
@@ -408,14 +484,13 @@ class SessionManagerPage(QWidget):
         if not self.active_group_name or not self.project_manager.is_active:
             return
 
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Results As", f"{self.active_group_name}_Results.xlsx", "Excel Files (*.xlsx)"
-        )
+        save_path = save_file_dialog(self, "Save Results As", "Excel Files (*.xlsx)", f"{self.active_group_name}_Results.xlsx")
         if not save_path:
             return
 
         try:
             self.project_manager.export_group_to_excel(self.active_group_name, save_path)
-            QMessageBox.information(self, "Success", f"Results successfully exported to:\n{save_path}")
+            show_info(self, self.fonts.orbitron, self.fonts.mono, "Success",
+                      f"Results successfully exported to:\n{save_path}")
         except Exception as e:
-            QMessageBox.critical(self, "Export Error", str(e))
+            show_error(self, self.fonts.orbitron, self.fonts.mono, "Export Error", str(e))

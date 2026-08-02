@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, NEON_PINK, BG_PANEL, TRUE_AZURE, WARN_COLOR, CLOUDY_SKY, INPUT_STYLE
+from admin_dashboard.screens.dialogs import open_directory_dialog
 
 
 class NewProjectDialog(QDialog):
@@ -93,8 +94,7 @@ class NewProjectDialog(QDialog):
         layout.addWidget(btn_create)
 
     def _choose_folder(self):
-        options = QFileDialog.Option.DontUseNativeDialog
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory to Save Project", options=options)
+        dir_path = open_directory_dialog(self, "Select Directory to Save Project")
         if dir_path:
             self._chosen_dir = dir_path
             self.location_display.setText(dir_path)

@@ -289,6 +289,7 @@ class WebSocketServer(QThread):
             total_score=msg.get("total_score", 0.0),
             mistakes=msg.get("mistakes", []),
             answer_version=msg.get("answer_version"),
+            group_type=msg.get("group_type"),
         )
         self._bump_scan_count(phone_name)
 
@@ -314,6 +315,7 @@ class WebSocketServer(QThread):
                 total_score=payload.get("total_score", 0.0),
                 mistakes=payload.get("mistakes", []),
                 answer_version=payload.get("answer_version"),
+                group_type=payload.get("group_type"),
             )
             self._bump_scan_count(phone_name)
             self.score_saved.emit(student_id, float(payload.get("total_score", 0.0)))

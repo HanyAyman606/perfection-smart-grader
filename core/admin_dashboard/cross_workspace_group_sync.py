@@ -23,21 +23,38 @@ from admin_dashboard.project_manager import DB_FILENAME
 class CrossWorkspaceGroupSync:
     @staticmethod
     def purge_group_everywhere(group_name: str):
-        """Deletes every roster row tagged with group_name from every
-        workspace roster.db we know about (via recent_projects)."""
+        """Deletes every roster row AND every grade/session tagged with
+        group_name from every workspace roster.db we know about. Grades
+        are deleted via a session_id subquery since the grades table
+        doesn't carry group_name directly — it's reached through sessions."""
         for entry in recent_projects.list_recent():
             db_path = os.path.join(entry["path"], DB_FILENAME)
             if not os.path.exists(db_path):
                 continue
             conn = sqlite3.connect(db_path)
             conn.execute("DELETE FROM students WHERE group_name = ?", (group_name,))
+            existing_tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('grades', 'sessions')"
+                )
+            }
+            if "sessions" in existing_tables and "grades" in existing_tables:
+                conn.execute(
+                    "DELETE FROM grades WHERE session_id IN "
+                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                    (group_name,),
+                )
+            if "sessions" in existing_tables:
+                conn.execute("DELETE FROM sessions WHERE group_name = ?", (group_name,))
             conn.commit()
             conn.close()
 
     @staticmethod
     def rename_group_everywhere(old_name: str, new_name: str):
         """Same reach as purge_group_everywhere, but UPDATEs group_name
-        instead of deleting rows."""
+        instead of deleting rows — covers students AND sessions (grades
+        are keyed by session_id, not group_name, so they follow
+        automatically once their parent session is renamed)."""
         for entry in recent_projects.list_recent():
             db_path = os.path.join(entry["path"], DB_FILENAME)
             if not os.path.exists(db_path):
@@ -45,6 +62,10 @@ class CrossWorkspaceGroupSync:
             conn = sqlite3.connect(db_path)
             conn.execute(
                 "UPDATE students SET group_name = ? WHERE group_name = ?",
+                (new_name, old_name),
+            )
+            conn.execute(
+                "UPDATE sessions SET group_name = ? WHERE group_name = ?",
                 (new_name, old_name),
             )
             conn.commit()

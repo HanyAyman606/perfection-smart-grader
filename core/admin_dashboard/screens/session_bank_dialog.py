@@ -19,6 +19,7 @@ from admin_dashboard.theme import (
 )
 from admin_dashboard.recent_projects import recent_projects
 from admin_dashboard.widgets.common import apply_card_shadow
+from admin_dashboard.screens.dialogs import open_directory_dialog
 
 
 class SessionBankDialog(QDialog):
@@ -150,8 +151,7 @@ class SessionBankDialog(QDialog):
         self.accept()
 
     def _browse_for_folder(self):
-        options = QFileDialog.Option.DontUseNativeDialog
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Existing Workspace Folder", options=options)
+        dir_path = open_directory_dialog(self, "Select Existing Workspace Folder")
         if dir_path:
             self.selected_path = dir_path
             self.accept()

@@ -18,6 +18,7 @@ from admin_dashboard.theme import (
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.common import make_tool_button
 from admin_dashboard.widgets.roi_canvas import ROIGraphicsView
+from admin_dashboard.screens.dialogs import show_warning, show_info, show_error, ask_yes_no, open_file_dialog
 
 
 class TemplatesPage(QWidget):
@@ -82,9 +83,7 @@ class TemplatesPage(QWidget):
 
     def load_template_image(self):
         options = QFileDialog.Option.DontUseNativeDialog
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Exam Image", "", "Images (*.png *.jpg *.jpeg)", options=options
-        )
+        file_path = open_file_dialog(self, "Select Exam Image", "Images (*.png *.jpg *.jpeg)")
         if file_path:
             # Auto-correct camera EXIF orientation so photos load upright
             reader = QImageReader(file_path)
@@ -97,16 +96,16 @@ class TemplatesPage(QWidget):
 
     def save_template(self):
         if not self.project_manager.is_active:
-            QMessageBox.warning(self, "Error", "No active workspace. Open or create a project first.")
+            show_warning(self, self.fonts.orbitron, self.fonts.mono, "Error", "No active workspace. Open or create a project first.")
             return
 
         if self.roi_canvas.current_pixmap is None:
-            QMessageBox.warning(self, "Error", "Load an exam image first.")
+            show_warning(self, self.fonts.orbitron, self.fonts.mono, "Error", "Load an exam image first.")
             return
 
         roi_coords = self.roi_canvas.get_roi_coordinates()
         if not roi_coords:
-            QMessageBox.warning(self, "Error", "You must draw a target ROI box first.")
+            show_warning(self, self.fonts.orbitron, self.fonts.mono, "Error", "You must draw a target ROI box first.")
             return
 
         try:
@@ -127,10 +126,10 @@ class TemplatesPage(QWidget):
 
             self.status_lbl.setStyleSheet(f"color: {CLOUDY_SKY};")
             self.status_lbl.setText("✔ Template saved to workspace.")
-            QMessageBox.information(self, "Success", "Template cropped and saved to workspace!")
+            show_info(self, self.fonts.orbitron, self.fonts.mono, "Success", "Template cropped and saved to workspace!")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            show_error(self, self.fonts.orbitron, self.fonts.mono, "Error", str(e))
 
     # ------------------------------------------------------------------
     def load_saved_template(self):
@@ -168,14 +167,10 @@ class TemplatesPage(QWidget):
             self.status_lbl.setText("")
             return
 
-        confirm = QMessageBox.question(
-            self, "Clear Image",
-            "This removes the loaded image and ROI box, and deletes the saved "
-            "template files from this workspace. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
+        confirmed = ask_yes_no(self, self.fonts.orbitron, self.fonts.mono, "Clear Image",  "This removes the loaded image and ROI box, and deletes the saved "
+        "template files from this workspace. Continue?")
+
+        if not confirmed: return
 
         self.roi_canvas.clear_image()
         self.project_manager.clear_template()

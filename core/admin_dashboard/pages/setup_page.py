@@ -17,6 +17,7 @@ from admin_dashboard.theme import INPUT_STYLE, CLOUDY_SKY, NEON_PINK, TEXT_MUTED
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.exam_modes import EXAM_MODES, DEFAULT_MODE_ID
 from admin_dashboard.widgets.mcq_range_builder import MCQRangeBuilder
+from admin_dashboard.screens.dialogs import show_warning, show_info
 
 
 class SetupPage(QWidget):
@@ -186,8 +187,8 @@ class SetupPage(QWidget):
             return
 
         if not self.range_builder.is_valid():
-            QMessageBox.warning(
-                self, "Incomplete Mark Ranges",
+            show_warning(
+                self, self.fonts.orbitron, self.fonts.mono, "Incomplete Mark Ranges",
                 "Every MCQ question must be covered by a mark range before saving."
             )
             return
@@ -208,8 +209,8 @@ class SetupPage(QWidget):
             essay_points_map=essay_data,
         )
 
-        QMessageBox.information(
-            self, "Success",
+        show_info(
+            self, self.fonts.orbitron, self.fonts.mono, "Success",
             f"Blueprint saved to project workspace:\n{self.project_manager.project_name}"
         )
 

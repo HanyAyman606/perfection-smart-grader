@@ -29,6 +29,7 @@ from admin_dashboard.pages.setup_page import SetupPage
 from admin_dashboard.pages.templates_page import TemplatesPage
 from admin_dashboard.pages.session_pages import SessionManagerPage
 from admin_dashboard.pages.model_answer_page import ModelAnswerPage
+from admin_dashboard.screens.dialogs import show_error
 
 NAV_SETUP, NAV_ANSWER_KEY, NAV_TEMPLATES, NAV_SESSION = range(4)
 
@@ -73,9 +74,8 @@ class CyberpunkDashboard(QMainWindow):
         if self.project_manager.open_project(path):
             self.activate_dashboard()
         else:
-            QMessageBox.critical(
-                self, "Error", f"Invalid Workspace: {CONFIG_FILENAME} not found in this folder."
-            )
+            show_error(self, self.fonts.orbitron, self.fonts.mono, "Error",
+                       f"Invalid Workspace: {CONFIG_FILENAME} not found in this folder.")
 
     # ------------------------------------------------------------------
     # WORKSPACE MANAGER

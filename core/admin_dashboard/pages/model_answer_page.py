@@ -23,6 +23,8 @@ from admin_dashboard.theme import CLOUDY_SKY, NEON_PINK, BG_PANEL, WARN_COLOR, T
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.bubble_row import BubbleRow
 from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY, get_mode_by_id
+from admin_dashboard.screens.dialogs import show_warning, show_info
+from admin_dashboard.screens.dialogs import show_warning, show_info, ask_yes_no
 
 NEXT_VERSION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -83,18 +85,20 @@ class ModelAnswerPage(QWidget):
         self.scroll.setWidget(self.rows_container)
         content_layout.addWidget(self.scroll)
 
-        btn_save = QPushButton("💾 SAVE MODEL ANSWER KEY")
-        btn_save.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
-        btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_save.setStyleSheet(f"""
+        self.btn_save = QPushButton("💾 SAVE MODEL ANSWER KEY")
+        self.btn_save.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
+        self.btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save.setEnabled(False)
+        self.btn_save.setStyleSheet(f"""
             QPushButton {{
                 background-color: {BG_PANEL}; color: {CLOUDY_SKY};
                 border: 2px solid {CLOUDY_SKY}; border-radius: 8px; padding: 15px; margin-top: 10px;
             }}
             QPushButton:hover {{ background-color: {CLOUDY_SKY}; color: #ffffff; }}
+            QPushButton:disabled {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; border-color: {TEXT_MUTED}; }}
         """)
-        btn_save.clicked.connect(self.save_model_answers)
-        content_layout.addWidget(btn_save)
+        self.btn_save.clicked.connect(self.save_model_answers)
+        content_layout.addWidget(self.btn_save)
 
     # ------------------------------------------------------------------
     def build_rows(self):
@@ -117,11 +121,15 @@ class ModelAnswerPage(QWidget):
         mode = get_mode_by_id(config.get("mode", DEFAULT_MODE_ID))
         self.supports_versions = mode.has_answer_versions
 
+        half = (mcq_count + 1) // 2  # left column gets the extra one when odd
         for i in range(1, mcq_count + 1):
             row = BubbleRow(i, self.fonts.orbitron, self.fonts.mono)
             row.changed.connect(self._refresh_status)
             self.rows.append(row)
-            grid_row, grid_col = (i - 1) // 2, (i - 1) % 2  # 2 questions per row
+            if i <= half:
+                grid_row, grid_col = i - 1, 0
+            else:
+                grid_row, grid_col = i - 1 - half, 1
             self.rows_layout.addWidget(row, grid_row, grid_col)
 
         saved_answers = config.get("model_answers", {})
@@ -157,14 +165,34 @@ class ModelAnswerPage(QWidget):
             return
 
         for version in self.versions:
+            tab_container = QWidget()
+            tab_layout = QHBoxLayout(tab_container)
+            tab_layout.setContentsMargins(0, 0, 0, 0)
+            tab_layout.setSpacing(2)
+
             btn = QPushButton(f"Booklet {version}")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
             btn.setStyleSheet(self._tab_style())
             btn.clicked.connect(lambda checked, v=version: self._switch_version(v))
-            self.version_row.addWidget(btn)
+            tab_layout.addWidget(btn)
             self.version_buttons[version] = btn
+
+            if len(self.versions) > 1:
+                btn_remove = QPushButton("✕")
+                btn_remove.setFixedSize(22, 22)
+                btn_remove.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_remove.setFont(QFont(self.fonts.orbitron, 9, QFont.Weight.Bold))
+                btn_remove.setStyleSheet(f"""
+                    QPushButton {{ background-color: {BG_PANEL}; color: {TEXT_MUTED};
+                    border: 2px solid {TEXT_MUTED}; border-radius: 6px; padding: 0px; }}
+                    QPushButton:hover {{ background-color: {WARN_COLOR}; color: #ffffff; border-color: {WARN_COLOR}; }}
+                """)
+                btn_remove.clicked.connect(lambda checked, v=version: self._remove_version(v))
+                tab_layout.addWidget(btn_remove)
+
+            self.version_row.addWidget(tab_container)
 
         btn_add = QPushButton("＋ ADD VERSION")
         btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -188,7 +216,8 @@ class ModelAnswerPage(QWidget):
         used = set(self.versions)
         next_label = next((c for c in NEXT_VERSION_LETTERS if c not in used), None)
         if next_label is None:
-            QMessageBox.warning(self, "Limit Reached", "No more version letters available.")
+            show_warning(self, self.fonts.orbitron, self.fonts.mono, "Limit Reached",
+                         "No more version letters available.")
             return
 
         self._capture_active_version()
@@ -198,12 +227,38 @@ class ModelAnswerPage(QWidget):
         self._rebuild_version_tabs()
         self._switch_version(next_label, save_previous=False)
 
+    def _remove_version(self, version: str):
+        if len(self.versions) <= 1:
+            return  # never leave a Shamel exam with zero booklets
+
+        confirmed = ask_yes_no(
+            self, self.fonts.orbitron, self.fonts.mono, "Remove Booklet",
+            f"Remove Booklet {version}? Its saved answers will be lost."
+        )
+        if not confirmed:
+            return
+
+        self.versions.remove(version)
+        self.answers_by_version.pop(version, None)
+        self.voided_by_version.pop(version, None)
+
+        self._rebuild_version_tabs()
+        if self.active_version == version:
+            self._switch_version(self.versions[0], save_previous=False)
+        else:
+            self._refresh_status()
+
     def _capture_active_version(self):
         """Reads whatever is currently on screen into the in-memory dicts
         for self.active_version, before the rows get repainted for a
-        different version."""
+        different version. Only rows with an actual selected answer get a
+        dict entry — an untouched row must be genuinely absent from the
+        dict, not present with a None value, or the completeness check
+        (str(q) not in answers) would treat "key exists but unanswered"
+        as answered."""
         self.answers_by_version[self.active_version] = {
-            str(r.question_number): r.selected_answer() for r in self.rows if not r.is_voided()
+            str(r.question_number): r.selected_answer()
+            for r in self.rows if not r.is_voided() and r.selected_answer()
         }
         self.voided_by_version[self.active_version] = [r.question_number for r in self.rows if r.is_voided()]
 
@@ -236,6 +291,28 @@ class ModelAnswerPage(QWidget):
             self.status_lbl.setStyleSheet(f"color: {CLOUDY_SKY};")
             self.status_lbl.setText(f"{prefix}✔ All {total} questions have a model answer.  ·  {voided_count} voided")
 
+        self.btn_save.setEnabled(self._all_versions_complete())
+
+    def _all_versions_complete(self) -> bool:
+        """Mirrors save_model_answers()'s validation, but runs live on every
+        change so the button itself reflects readiness instead of only
+        failing after a click. Captures the currently-displayed version's
+        live row state first — otherwise the active version's in-progress
+        answers wouldn't be reflected until a tab switch commits them."""
+        if not self.rows:
+            return False
+
+        self._capture_active_version()
+
+        total = len(self.rows)
+        for version in self.versions:
+            answers = self.answers_by_version.get(version, {})
+            voided = set(self.voided_by_version.get(version, []))
+            missing = [q for q in range(1, total + 1) if q not in voided and str(q) not in answers]
+            if missing:
+                return False
+        return True
+
     # ------------------------------------------------------------------
     def save_model_answers(self):
         if not self.project_manager.is_active:
@@ -256,11 +333,10 @@ class ModelAnswerPage(QWidget):
                 f"Booklet {v}: {qs}" if self.supports_versions else f"{qs}"
                 for v, qs in incomplete.items()
             )
-            QMessageBox.warning(
-                self, "Incomplete Answer Key",
-                f"These questions have no model answer or void flag yet:\n{details}"
-            )
+            show_warning(self, self.fonts.orbitron, self.fonts.mono, "Incomplete Answer Key",
+        f"These questions have no model answer or void flag yet:\n{details}")
             return
 
+
         self.project_manager.save_model_answers(self.answers_by_version, self.voided_by_version)
-        QMessageBox.information(self, "Success", "Model answer key saved to project workspace.")
+        show_info(self, self.fonts.orbitron, self.fonts.mono, "Success", "Model answer key saved to project workspace.")
