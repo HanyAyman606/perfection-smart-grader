@@ -79,7 +79,12 @@ class PayloadPreviewDialog(QDialog):
                                  f"{mcq_count - len(answers) - len(voided)} missing"))
         rows += [
             ("Essay Questions", f"{len(essay_map)} question(s)" if has_essays else "Not included"),
-            ("ROI Template", "Saved ✔" if template_path else "⚠ Not saved"),        ]
+            ("ROI Template", "Saved ✔" if template_path else "⚠ Not saved"),
+            ("Layout", f"{packet.get('choices_per_question', 4)} choices/Q · "
+                       f"{packet.get('questions_per_block', 10)} Q/block · "
+                       f"{packet.get('id_letter_count', 6)} ID letters · "
+                       f"{packet.get('id_digit_columns', '?')} ID digits"),
+        ]
         for label, value in rows:
             content_layout.addWidget(self._build_row(label, value, mono, orbitron))
 

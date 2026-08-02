@@ -16,7 +16,7 @@ import os
 import json
 import sqlite3
 from admin_dashboard.recent_projects import recent_projects
-from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY
+from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY, get_mode_by_id
 from admin_dashboard.group_registry import group_registry
 
 
@@ -140,7 +140,9 @@ class ProjectManager:
             json.dump(config, f, indent=4)
 
     def save_blueprint(self, mode_id: str, mcq_count: int, mcq_ranges: list[dict],
-                       has_essays: bool, essay_points_map: dict):
+                       has_essays: bool, essay_points_map: dict,
+                       choices_per_question: int, questions_per_block: int,
+                       id_letter_count: int):
         self._update_config(
             project_name=self.project_name,
             mode=mode_id,
@@ -148,6 +150,9 @@ class ProjectManager:
             mcq_ranges=mcq_ranges,
             has_essays=has_essays,
             essay_points_map=essay_points_map,
+            choices_per_question=choices_per_question,
+            questions_per_block=questions_per_block,
+            id_letter_count=id_letter_count,
         )
 
     def save_template(self, template_path: str, roi_coordinates: dict, source_template_path: str = None):
@@ -225,9 +230,12 @@ class ProjectManager:
     # ------------------------------------------------------------------
     def build_sync_packet(self, group_name: str) -> dict:
         exam_config = self.load_config()
+        mode_id = exam_config.get("mode", DEFAULT_MODE_ID)
+        exam_mode = get_mode_by_id(mode_id)
+
         return {
             "exam_name": exam_config.get("project_name", self.project_name),
-            "exam_mode": exam_config.get("mode", "quiz"),
+            "exam_mode": mode_id,
             "mcq_count": exam_config.get("mcq_count", 0),
             "mcq_ranges": exam_config.get("mcq_ranges", []),
             "has_essays": exam_config.get("has_essays", False),
@@ -238,6 +246,10 @@ class ProjectManager:
             "answer_versions": exam_config.get("answer_versions", [SINGLE_VERSION_KEY]),
             "model_answers": exam_config.get("model_answers", {}),      # {version: {"1": "A", ...}}
             "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}
+            "choices_per_question": exam_config.get("choices_per_question", 4),
+            "questions_per_block": exam_config.get("questions_per_block", 10),
+            "id_letter_count": exam_config.get("id_letter_count", 6),
+            "id_digit_columns": exam_mode.id_digit_count,  # derived from mode, not saved
         }
 
     def get_session_password(self) -> str:
@@ -263,6 +275,9 @@ class ProjectManager:
         covered = sum((r["end"] - r["start"] + 1) for r in ranges)
         if covered < mcq_count:
             problems.append("Mark ranges do not cover every MCQ question yet.")
+
+        if "choices_per_question" not in config or "id_letter_count" not in config:
+            problems.append("Layout parameters (choices per question, ID letter count) have not been saved yet.")
 
         answers_by_version = config.get("model_answers", {})
         voided_by_version = config.get("voided_questions", {})

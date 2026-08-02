@@ -53,10 +53,31 @@ class SetupPage(QWidget):
         self.mcq_count_spin.setStyleSheet(INPUT_STYLE)
         self.mcq_count_spin.valueChanged.connect(self._on_mcq_count_changed)
 
+        self.choices_per_question_spin = QSpinBox()
+        self.choices_per_question_spin.setRange(2, 8)
+        self.choices_per_question_spin.setValue(4)
+        self.choices_per_question_spin.setStyleSheet(INPUT_STYLE)
+
+        self.questions_per_block_spin = QSpinBox()
+        self.questions_per_block_spin.setRange(1, 50)
+        self.questions_per_block_spin.setValue(10)
+        self.questions_per_block_spin.setStyleSheet(INPUT_STYLE)
+
+        self.id_letter_count_spin = QSpinBox()
+        self.id_letter_count_spin.setRange(1, 12)
+        self.id_letter_count_spin.setValue(6)
+        self.id_letter_count_spin.setStyleSheet(INPUT_STYLE)
+
         top_grid.addWidget(self._make_label("EXAM MODE:"), 0, 0)
         top_grid.addWidget(self.exam_mode_combo, 0, 1)
-        top_grid.addWidget(self._make_label("TOTAL MCQ QUESTIONS:"), 1, 0)
-        top_grid.addWidget(self.mcq_count_spin, 1, 1)
+        top_grid.addWidget(self._make_label("TOTAL MCQ QUESTIONS:"), 0, 2)
+        top_grid.addWidget(self.mcq_count_spin, 0, 3)
+        top_grid.addWidget(self._make_label("CHOICES PER Q:"), 1, 0)
+        top_grid.addWidget(self.choices_per_question_spin, 1, 1)
+        top_grid.addWidget(self._make_label("Q'S PER BLOCK:"), 1, 2)
+        top_grid.addWidget(self.questions_per_block_spin, 1, 3)
+        top_grid.addWidget(self._make_label("ID LETTER COLS:"), 1, 4)
+        top_grid.addWidget(self.id_letter_count_spin, 1, 5)
         content_layout.addLayout(top_grid)
 
         # -- MCQ mark ranges ------------------------------------------
@@ -70,7 +91,19 @@ class SetupPage(QWidget):
         # -- Essay config -----------------------------------------------
         self.essay_checkbox = QCheckBox(" INCLUDE WRITTEN / ESSAY QUESTIONS")
         self.essay_checkbox.setFont(QFont(orbitron, 11, QFont.Weight.Bold))
-        self.essay_checkbox.setStyleSheet(f"color: {NEON_PINK};")
+        self.essay_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.essay_checkbox.setStyleSheet(f"""
+            QCheckBox {{ color: {NEON_PINK}; spacing: 10px; }}
+            QCheckBox::indicator {{
+                width: 22px; height: 22px; border: 2px solid {NEON_PINK};
+                border-radius: 6px; background-color: {BG_PANEL};
+            }}
+            QCheckBox::indicator:hover {{ border: 2px solid {CLOUDY_SKY}; }}
+            QCheckBox::indicator:checked {{
+                background-color: {NEON_PINK}; border: 2px solid {NEON_PINK};
+                image: none;
+            }}
+        """)
         self.essay_checkbox.setChecked(False)  # off by default, per spec
 
         essay_row = QGridLayout()
@@ -207,6 +240,9 @@ class SetupPage(QWidget):
             mcq_ranges=self.range_builder.get_ranges(),
             has_essays=has_essays,
             essay_points_map=essay_data,
+            choices_per_question=self.choices_per_question_spin.value(),
+            questions_per_block=self.questions_per_block_spin.value(),
+            id_letter_count=self.id_letter_count_spin.value(),
         )
 
         show_info(
@@ -237,6 +273,10 @@ class SetupPage(QWidget):
             self.range_builder.load_ranges(mcq_count, saved_ranges)
         else:
             self.range_builder.set_total_questions(mcq_count)
+
+        self.choices_per_question_spin.setValue(config.get("choices_per_question", 4))
+        self.questions_per_block_spin.setValue(config.get("questions_per_block", 10))
+        self.id_letter_count_spin.setValue(config.get("id_letter_count", 6))
 
         has_essays = config.get("has_essays", False)
         essay_map = config.get("essay_points_map", {})
