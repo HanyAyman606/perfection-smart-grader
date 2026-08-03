@@ -1,0 +1,4 @@
+C:/Users/asus/Downloads/perfection proj/core/edge_client/native_cv/build-android/CMakeFiles/omr_cli.dir
+C:/Users/asus/Downloads/perfection proj/core/edge_client/native_cv/build-android/CMakeFiles/omr_engine.dir
+C:/Users/asus/Downloads/perfection proj/core/edge_client/native_cv/build-android/CMakeFiles/edit_cache.dir
+C:/Users/asus/Downloads/perfection proj/core/edge_client/native_cv/build-android/CMakeFiles/rebuild_cache.dir

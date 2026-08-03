@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import '../models/exam_models.dart';
 import '../services/websocket_client.dart';
@@ -13,6 +16,8 @@ class ExamSessionProvider extends ChangeNotifier {
   MasterPacket? _masterPacket;
   String? _selectedVersion;
   bool _hasCalibratedProfile = false;
+  ui.Size? _calibrationSize;
+  double _fiducialRatio = 1.414;
   GradeResult? _currentScan;
   DuplicateComparison? _pendingDuplicate;
   String _proctorName = "";
@@ -30,6 +35,8 @@ class ExamSessionProvider extends ChangeNotifier {
   MasterPacket? get masterPacket => _masterPacket;
   String? get selectedVersion => _selectedVersion;
   bool get hasCalibratedProfile => _hasCalibratedProfile;
+  ui.Size? get calibrationSize => _calibrationSize;
+  double get fiducialRatio => _fiducialRatio;
   GradeResult? get currentScan => _currentScan;
   DuplicateComparison? get pendingDuplicate => _pendingDuplicate;
   String get proctorName => _proctorName;
@@ -60,7 +67,7 @@ class ExamSessionProvider extends ChangeNotifier {
       if (_masterPacket!.answerVersions.isNotEmpty) {
         _selectedVersion = _masterPacket!.answerVersions.first;
       }
-      
+
       if (_hasCalibratedProfile) {
         _phase = SessionPhase.scanning;
       } else {
@@ -92,7 +99,7 @@ class ExamSessionProvider extends ChangeNotifier {
     _errorMessage = null;
     await _client.connect(host: host, name: name, password: password);
   }
-  
+
   void disconnect() {
     _client.disconnect();
   }
@@ -102,8 +109,10 @@ class ExamSessionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void markCalibrated() {
+  void markCalibrated(ui.Size size, {double fiducialRatio = 1.414}) {
     _hasCalibratedProfile = true;
+    _calibrationSize = size;
+    _fiducialRatio = fiducialRatio;
     _phase = SessionPhase.scanning;
     notifyListeners();
   }
@@ -124,17 +133,48 @@ class ExamSessionProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void submitCurrentScan(String timestamp) {
-    if (_currentScan != null && _currentScan!.studentId != null && _currentScan!.studentId!.isNotEmpty) {
-      _client.submitScore(_currentScan!.toSubmitScorePayload(timestamp));
+  void updateCurrentScan({required String studentId, required double essayTotal, String? groupType}) {
+    if (_currentScan != null) {
+      _currentScan!.studentId = studentId;
+      _currentScan!.essayTotal = essayTotal;
+      _currentScan!.groupType = groupType;
+      notifyListeners();
     }
   }
 
-  void resolveDuplicate(DuplicateAction action, String timestamp) {
+  Future<void> commitCurrentScan() async {
+    final timestamp = DateTime.now().toLocal().toString().split('.')[0];
+    await submitCurrentScan(timestamp);
+  }
+
+  Future<void> submitCurrentScan(String timestamp) async {
+    if (_currentScan != null && _currentScan!.studentId != null && _currentScan!.studentId!.isNotEmpty) {
+      final payload = _currentScan!.toSubmitScorePayload(timestamp);
+      
+      if (_currentScan!.imagePath != null) {
+        try {
+          final bytes = await File(_currentScan!.imagePath!).readAsBytes();
+          payload['image_base64'] = base64Encode(bytes);
+        } catch (e) {
+          debugPrint("Failed to encode image: $e");
+        }
+      }
+      
+      _client.submitScore(payload);
+    }
+  }
+
+  Future<void> resolveDuplicate(DuplicateAction action, String timestamp) async {
     if (_pendingDuplicate != null) {
       Map<String, dynamic>? newPayload;
       if (action == DuplicateAction.overwrite && _currentScan != null) {
         newPayload = _currentScan!.toSubmitScorePayload(timestamp);
+        if (_currentScan!.imagePath != null) {
+          try {
+            final bytes = await File(_currentScan!.imagePath!).readAsBytes();
+            newPayload['image_base64'] = base64Encode(bytes);
+          } catch (e) {}
+        }
       }
       _client.resolveDuplicate(
         studentId: _pendingDuplicate!.studentId,

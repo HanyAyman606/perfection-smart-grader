@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-# CMake configuration
-=======
 cmake_minimum_required(VERSION 3.10)
 project(native_cv)
 
@@ -17,8 +14,7 @@ project(native_cv)
 # MSYS2 UCRT64 toolchain (the same g++/cmake this project has always been built
 # with) so find_package(OpenCV) resolves without extra hints; on Linux/macOS a
 # system OpenCV install (or -DCMAKE_PREFIX_PATH=<opencv install>) is enough.
-find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs highgui)
-
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs highgui calib3d)
 set(OMR_ENGINE_SOURCES src/omr_engine.cpp)
 
 add_executable(omr_cli ${OMR_ENGINE_SOURCES})
@@ -33,4 +29,3 @@ target_link_libraries(omr_engine PRIVATE ${OpenCV_LIBS})
 # otherwise prepend "lib" on Windows) so the Dart-side DynamicLibrary.open() path is
 # one predictable string instead of needing a per-platform prefix guess.
 set_target_properties(omr_engine PROPERTIES PREFIX "" OUTPUT_NAME "omr_engine")
->>>>>>> af9284c712fd3317b7fecb1c4c6ba726ec81c9a6

@@ -1,14 +1,9 @@
-import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
+import 'package:path_provider/path_provider.dart';
 import '../providers/exam_session_provider.dart';
 import '../models/exam_models.dart';
-import '../services/websocket_client.dart';
-import '../services/printer_service.dart';
-import 'duplicate_resolution_dialog.dart';
-
-enum _ReviewState { editing, submitting, saved }
 
 class GradingReviewScreen extends StatefulWidget {
   const GradingReviewScreen({super.key});
@@ -18,260 +13,237 @@ class GradingReviewScreen extends StatefulWidget {
 }
 
 class _GradingReviewScreenState extends State<GradingReviewScreen> {
-  final _studentIdController = TextEditingController();
-  final _essayScoreController = TextEditingController();
-
-  _ReviewState _state = _ReviewState.editing;
-  String? _originalStudentId; // Captured before proctor edits, for idSource comparison
-  String? _savedTimestamp;
-
-  StreamSubscription? _eventSub;
+  late TextEditingController _idController;
+  late TextEditingController _essayController;
+    late TextEditingController _groupTypeController;
+  String _timestamp = "";
+  bool _isReceiptGenerated = false;
 
   @override
   void initState() {
     super.initState();
     final session = Provider.of<ExamSessionProvider>(context, listen: false);
-    if (session.currentScan != null) {
-      _originalStudentId = session.currentScan!.studentId;
-      _studentIdController.text = session.currentScan!.studentId ?? "";
-      // Show blank instead of "0.0" for essay score when it's zero
-      final essay = session.currentScan!.essayTotal;
-      _essayScoreController.text = essay == 0.0 ? "" : essay.toString();
-    }
-
-    // Listen to raw websocket events for ScoreSaved / ScoreDuplicate
-    final client = Provider.of<WebSocketClient>(context, listen: false);
-    _eventSub = client.eventStream.listen(_onServerEvent);
-  }
-
-  void _onServerEvent(ServerEvent event) {
-    if (!mounted) return;
-
-    if (event is ScoreSaved) {
-      setState(() {
-        _state = _ReviewState.saved;
-      });
-    } else if (event is ScoreDuplicate) {
-      _showDuplicateDialog(event.comparison);
-    } else if (event is DuplicateResolved) {
-      final session = Provider.of<ExamSessionProvider>(context, listen: false);
-      // For overwrite: stay in saved state so proctor can print
-      // For keep_previous / discard_both: pop back to scanner
-      // The provider already clears currentScan for non-overwrite
-      if (session.currentScan != null) {
-        // Overwrite was chosen — we're still showing this scan
-        setState(() {
-          _state = _ReviewState.saved;
-        });
-      } else {
-        // keep_previous or discard_both — go back to scanner
-        if (mounted) Navigator.of(context).pop();
-      }
-    }
-  }
-
-  Future<void> _showDuplicateDialog(DuplicateComparison comparison) async {
-    final result = await showDialog<DuplicateAction>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => DuplicateResolutionDialog(comparison: comparison),
-    );
-
-    if (result != null && mounted) {
-      final session = Provider.of<ExamSessionProvider>(context, listen: false);
-      final timestamp = DateTime.now().toIso8601String();
-      session.resolveDuplicate(result, timestamp);
-      // Don't pop here — wait for DuplicateResolved event from server
-    }
+    final scan = session.currentScan;
+    _idController = TextEditingController(text: scan?.studentId ?? '');
+    _essayController = TextEditingController(text: scan?.essayTotal.toString() ?? '0.0');
+    _groupTypeController = TextEditingController(text: scan?.groupType ?? '');
   }
 
   @override
   void dispose() {
-    _eventSub?.cancel();
-    _studentIdController.dispose();
-    _essayScoreController.dispose();
+    _idController.dispose();
+    _essayController.dispose();
+    _groupTypeController.dispose();   // <-- add
     super.dispose();
   }
 
-  void _submit() {
-    final session = Provider.of<ExamSessionProvider>(context, listen: false);
-    if (session.currentScan == null) return;
-
-    final studentId = _studentIdController.text.trim();
-    if (studentId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Student ID is required')),
-      );
-      return;
-    }
-
-    // Fix idSource: compare against the ORIGINAL OCR value captured in initState,
-    // not against the field we're about to overwrite
-    if (_originalStudentId != null && studentId != _originalStudentId) {
-      session.currentScan!.idSource = "manual";
-    } else if (_originalStudentId == null) {
-      session.currentScan!.idSource = "manual";
-    }
-    // else: idSource stays as "ocr" (proctor didn't change the OCR value)
-
-    session.currentScan!.studentId = studentId;
-
-    final essayVal = double.tryParse(_essayScoreController.text) ?? 0.0;
-    session.currentScan!.essayTotal = essayVal;
-
-    setState(() {
-      _state = _ReviewState.submitting;
-    });
-
-    _savedTimestamp = DateTime.now().toIso8601String();
-    session.submitCurrentScan(_savedTimestamp!);
-    // Don't pop or print here — wait for ScoreSaved event from the server
-  }
-
-  void _printReceipt() {
-    final session = Provider.of<ExamSessionProvider>(context, listen: false);
-    if (session.currentScan == null) return;
-
-    PrinterService.instance.printReceipt(
-      examName: session.masterPacket!.examName,
-      studentId: session.currentScan!.studentId ?? "",
-      totalScore: session.currentScan!.totalScore,
-      mcqScore: session.currentScan!.mcqScore,
-      essayScore: session.currentScan!.essayTotal,
-      mistakes: session.currentScan!.mistakes,
-      timestamp: _savedTimestamp ?? DateTime.now().toIso8601String(),
-    );
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Receipt sent to printer')),
-    );
-  }
-
-  void _nextStudent() {
+  void _retakePhoto() {
     final session = Provider.of<ExamSessionProvider>(context, listen: false);
     session.clearCurrentScan();
     Navigator.of(context).pop();
+  }
+
+  void _generateReceipt() {
+    final session = Provider.of<ExamSessionProvider>(context, listen: false);
+    final groupTypeText = _groupTypeController.text.trim();
+    session.updateCurrentScan(
+      studentId: _idController.text.trim(),
+      essayTotal: double.tryParse(_essayController.text) ?? 0.0,
+      groupType: groupTypeText.isEmpty ? null : groupTypeText.toUpperCase(),   // <-- add
+    );
+    setState(() {
+      _timestamp = DateTime.now().toLocal().toString().split('.')[0];
+      _isReceiptGenerated = true;
+    });
+  }
+
+  Future<void> _submit() async {
+    final session = Provider.of<ExamSessionProvider>(context, listen: false);
+    await session.commitCurrentScan();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Grade saved successfully!'), backgroundColor: Colors.green),
+      );
+      Navigator.of(context).pop();
+    }
+  }
+
+  void _viewEngineAnalysis() async {
+    final docDir = await getApplicationDocumentsDirectory();
+    final debugImagePath = '${docDir.path}/latest_scan_debug.png';
+    final file = File(debugImagePath);
+
+    if (await file.exists()) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (_) => Dialog(
+            insetPadding: EdgeInsets.zero,
+            backgroundColor: Colors.black,
+            child: Stack(
+              children: [
+                InteractiveViewer(
+                  maxScale: 6.0,
+                  child: Image.file(file, fit: BoxFit.contain, width: double.infinity, height: double.infinity),
+                ),
+                Positioned(
+                  top: 16, right: 16,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } else {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No debug image found.')));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final session = context.watch<ExamSessionProvider>();
     final scan = session.currentScan;
+    if (scan == null) return const SizedBox.shrink();
 
-    if (scan == null) {
-      return const Scaffold(body: Center(child: Text("No scan active")));
+    bool needsReview = false;
+    for (var m in scan.mistakes) {
+      if (m.given == 'rejected' || m.given == 'multiple_marks') needsReview = true;
     }
 
-    final isSaved = _state == _ReviewState.saved;
-    final isSubmitting = _state == _ReviewState.submitting;
+    final total = scan.mcqScore + scan.essayTotal;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isSaved ? 'Grade Saved ✓' : 'Review Grade'),
-        leading: isSaved
-            ? null // No back button when saved — use "Next Student"
-            : IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () {
-                  session.clearCurrentScan();
-                  Navigator.of(context).pop();
-                },
-              ),
+        title: const Text('Review Grade'),
+        automaticallyImplyLeading: false,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Top Section
             TextField(
-              controller: _studentIdController,
-              decoration: InputDecoration(
-                labelText: 'Student ID',
-                border: const OutlineInputBorder(),
-                suffixIcon: scan.idSource == 'ocr'
-                    ? const Icon(Icons.check_circle, color: Colors.green)
-                    : const Icon(Icons.edit, color: Colors.orange),
-              ),
-              keyboardType: TextInputType.text,
-              enabled: !isSaved && !isSubmitting,
+              controller: _idController,
+              enabled: !_isReceiptGenerated,
+              decoration: const InputDecoration(labelText: 'Student ID', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 16),
+            TextField(                                                          // <-- add this whole block
+              controller: _groupTypeController,
+              enabled: !_isReceiptGenerated,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(labelText: 'Group Type (e.g. M, N, W)', border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _essayController,
+              enabled: !_isReceiptGenerated,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Essay Score', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 24),
-            Text(
-              'MCQ Score: ${scan.mcqScore}',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            if (session.masterPacket!.hasEssays)
-              Padding(
-                padding: const EdgeInsets.only(top: 24.0),
-                child: TextField(
-                  controller: _essayScoreController,
-                  decoration: const InputDecoration(
-                    labelText: 'Essay Score',
-                    border: OutlineInputBorder(),
+            Text('MCQ Score: ${scan.mcqScore}', style: const TextStyle(fontSize: 18)),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _retakePhoto,
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text('Retake Photo'),
+                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  enabled: !isSaved && !isSubmitting,
                 ),
-              ),
-            const SizedBox(height: 24),
-            const Text(
-              'Mistakes:',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                if (!_isReceiptGenerated) const SizedBox(width: 16),
+                if (!_isReceiptGenerated)
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _generateReceipt,
+                      icon: const Icon(Icons.receipt),
+                      label: const Text('Generate Receipt'),
+                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                    ),
+                  ),
+              ],
             ),
-            Expanded(
-              child: ListView.builder(
-                itemCount: scan.mistakes.length,
-                itemBuilder: (context, index) {
-                  final m = scan.mistakes[index];
-                  return ListTile(
-                    title: Text('Q${m.question}'),
-                    subtitle: Text('Correct: ${m.correct} | Given: ${m.given}'),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 24),
 
-            // --- Action buttons change based on state ---
-            if (!isSaved) ...[
-              ElevatedButton(
-                onPressed: isSubmitting ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  backgroundColor: Colors.blueAccent,
+            // Bottom Section (Conditionally Visible)
+            if (_isReceiptGenerated) ...[
+              const SizedBox(height: 24),
+              const Divider(),
+              const SizedBox(height: 16),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      Text('Student ID: ${scan.studentId ?? "MISSING"}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      if (scan.groupType != null && scan.groupType!.isNotEmpty)
+                        Text('Group: ${scan.groupType}', style: const TextStyle(fontSize: 16, color: Colors.grey)),
+                      const Divider(),
+                      Text('MCQ Score: ${scan.mcqScore}', style: const TextStyle(fontSize: 18)),
+                      Text('Essay Score: ${scan.essayTotal}', style: const TextStyle(fontSize: 18)),
+                      const Divider(),
+                      Text('TOTAL: $total', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.green)),
+                      const SizedBox(height: 8),
+                      Text('Timestamp: $_timestamp', style: const TextStyle(color: Colors.grey)),
+                    ],
+                  ),
                 ),
-                child: isSubmitting
-                    ? const SizedBox(
-                        height: 20, width: 20,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                      )
-                    : const Text('SUBMIT'),
               ),
-            ] else ...[
-              // Saved state: Print (repeatable) + Next Student
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: needsReview ? Colors.red.shade700 : Colors.blueGrey,
+                  padding: const EdgeInsets.symmetric(vertical: 16)
+                ),
+                onPressed: _viewEngineAnalysis,
+                icon: const Icon(Icons.troubleshoot, color: Colors.white),
+                label: Text(
+                  needsReview ? 'Suspicious Marks Detected — View Engine Analysis' : 'View Engine Analysis',
+                  style: const TextStyle(color: Colors.white)
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (scan.mistakes.isNotEmpty) ...[
+                const Text('Mistakes:', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: scan.mistakes.length,
+                  itemBuilder: (context, i) {
+                    final m = scan.mistakes[i];
+                    return ListTile(
+                      title: Text('Q${m.question}'),
+                      subtitle: Text('Correct: ${m.correct} | Given: ${m.given}'),
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
+              ],
               Row(
                 children: [
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _printReceipt,
+                    child: OutlinedButton.icon(
+                      onPressed: () { /* Trigger Print Later */ },
                       icon: const Icon(Icons.print),
-                      label: const Text('PRINT RECEIPT'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: Colors.teal,
-                      ),
+                      label: const Text('Print Receipt'),
+                      style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
                     ),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: _nextStudent,
-                      icon: const Icon(Icons.arrow_forward),
-                      label: const Text('NEXT STUDENT'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: Colors.blueAccent,
-                      ),
+                      onPressed: _submit,
+                      icon: const Icon(Icons.check),
+                      label: const Text('Submit & Next'),
+                      style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.blueAccent),
                     ),
                   ),
                 ],

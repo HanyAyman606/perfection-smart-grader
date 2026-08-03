@@ -15,7 +15,7 @@ class ConnectionScreen extends StatefulWidget {
 class _ConnectionScreenState extends State<ConnectionScreen> {
   final _hostController = TextEditingController(text: "192.168.1.100");
   final _nameController = TextEditingController();
-  final _passwordController = TextEditingController(text: "12345678");
+  final _passwordController = TextEditingController();
 
   @override
   void initState() {

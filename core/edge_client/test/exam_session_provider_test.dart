@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nexus_edge_mobile/providers/exam_session_provider.dart';
 import 'package:nexus_edge_mobile/services/websocket_client.dart';
@@ -73,7 +74,7 @@ void main() {
 
     test('AuthSuccess event, hasCalibratedProfile == true', () async {
       // mark calibrated first
-      provider.markCalibrated();
+      provider.markCalibrated(const ui.Size(100, 100));
       expect(provider.phase, SessionPhase.scanning);
       
       // Simulate reconnect/AuthSuccess
@@ -93,7 +94,7 @@ void main() {
     });
 
     test('requestRecalibrate sets phase to needsCalibration', () {
-      provider.markCalibrated();
+      provider.markCalibrated(const ui.Size(100, 100));
       expect(provider.phase, SessionPhase.scanning);
       
       provider.requestRecalibrate();

@@ -273,7 +273,7 @@ int pickMarkedOption(const Mat& gray, vector<Bubble>& options, const vector<doub
 // (rowN-1,colN-1) bubble centers — the "2-click method". Axis-aligned only:
 // good enough since Flutter frames the sheet consistently and small skew is
 // absorbed by the local contour search radius during matching — EXCEPT for a
-// single-column block (LETTER, DIGIT_i), where that absorption isn't available:
+// single-column block (LETTER, DIGIT_i), where that column isn't available:
 // with cols==1, tx would otherwise be forced to 0 for every row, pinning x to
 // tl.x and silently discarding br.x entirely. A real photo that isn't perfectly
 // upright prints that column at a genuine, consistent diagonal (each row a
@@ -339,143 +339,81 @@ double iou(const Rect& a, const Rect& b);
 // relative to the image's own resolution rather than a fixed pixel count —
 // a fixed kernel tuned for one photo's resolution/gap size is exactly the
 // kind of hardcoded assumption that breaks on the next photo.
-vector<Rect> detectBorderBoxes(const Mat& thresh) {
-    int k = max(5, (int)round(min(thresh.cols, thresh.rows) / 100.0));
-    if (k % 2 == 0) k++;
-    Mat closed;
-    Mat kernel = getStructuringElement(MORPH_ELLIPSE, Size(k, k));
-    morphologyEx(thresh, closed, MORPH_CLOSE, kernel, Point(-1, -1), 2);
+// Safely extracts the 4 extreme corners from a set of 4 points.
+vector<Point2f> sortCorners(const vector<Point2f>& pts) {
+    Point2f tl, tr, br, bl;
+    double min_sum = 1e9, max_sum = -1e9;
+    double min_diff = 1e9, max_diff = -1e9;
 
-    vector<vector<Point>> contours;
-    findContours(closed, contours, RETR_LIST, CHAIN_APPROX_SIMPLE);
-    double imgArea = (double)thresh.cols * thresh.rows;
+    for (const auto& pt : pts) {
+        double sum = pt.x + pt.y;
+        double diff = pt.x - pt.y;
 
-    vector<Rect> boxes;
-    for (auto& c : contours) {
-        Rect b = boundingRect(c);
-        double bboxArea = (double)b.width * b.height;
-        // Must be large (a block-group border spans a big chunk of the page) but not
-        // the whole frame (that would just be image-edge/background noise).
-        if (bboxArea < imgArea * 0.02 || bboxArea > imgArea * 0.85) continue;
-        double area = contourArea(c);
-        double extent = area / bboxArea;
-        if (extent < 0.6) continue;
-        float aspect = (float)b.width / b.height;
-        if (aspect < 0.2 || aspect > 5.0) continue;
-        boxes.push_back(b);
+        if (sum < min_sum) { min_sum = sum; tl = pt; }
+        if (sum > max_sum) { max_sum = sum; br = pt; }
+        if (diff < min_diff) { min_diff = diff; bl = pt; }
+        if (diff > max_diff) { max_diff = diff; tr = pt; }
     }
-    // A single border line's inner and outer edge each trace their own contour —
-    // dedup near-identical boxes, keeping the larger (outer) one.
-    sort(boxes.begin(), boxes.end(), [](const Rect& a, const Rect& b) { return a.area() > b.area(); });
-    vector<Rect> deduped;
-    for (auto& b : boxes) {
-        bool dup = false;
-        for (auto& d : deduped) if (iou(b, d) > 0.5) { dup = true; break; }
-        if (!dup) deduped.push_back(b);
-    }
-    // The genuine block-group borders (ID box, Q1-25 box, ...) are all comparably
-    // large — they each span a meaningful section of the page. A stray small blob
-    // (a cluster of nearby bubbles/text merged by the morphological close into
-    // something box-shaped) can still slip past the area/extent/aspect gates above
-    // despite being a completely different, unrelated feature — and unlike the real
-    // borders, it has no counterpart to reliably match against in another photo, so
-    // whatever it coincidentally pairs with corrupts computeRegistration's fit.
-    // Drop anything under 20% of the largest detected box's area: a real second or
-    // third border group is never that much smaller than the biggest one on the
-    // same page, so this filters noise without risking a genuine border.
-    if (!deduped.empty()) {
-        double areaFloor = deduped[0].area() * 0.2;
-        deduped.erase(remove_if(deduped.begin(), deduped.end(),
-                                 [areaFloor](const Rect& b) { return b.area() < areaFloor; }),
-                      deduped.end());
-    }
-    if (deduped.size() > 6) deduped.resize(6);
-    return deduped;
+    return {tl, tr, br, bl};
 }
 
-struct RegistrationTransform {
-    double scaleX = 1.0, offsetX = 0.0;
-    double scaleY = 1.0, offsetY = 0.0;
-    bool registered = false;
-    int matchedBoxes = 0;
-};
+vector<Point2f> findCornerSquares(const Mat& raw) {
+    Mat gray, blurred, thresh;
+    if (raw.channels() == 3) cvtColor(raw, gray, COLOR_BGR2GRAY);
+    else gray = raw.clone();
 
-// Solves prod = scale*calib + offset independently per axis from matched border-box
-// corners. Falls back to plain proportional full-image scaling (equivalent to the
-// pre-registration behavior) whenever no boxes can be matched, so a template without
-// detectable borders (or a photo where detection fails) degrades to the old
-// fixed-frame assumption instead of crashing or producing a nonsensical transform.
-RegistrationTransform computeRegistration(const vector<Rect2d>& calibBoxesNorm, int calibW, int calibH,
-                                           const vector<Rect>& prodBoxes, int prodW, int prodH) {
-    RegistrationTransform t;
-    t.scaleX = (double)prodW / calibW;
-    t.scaleY = (double)prodH / calibH;
-    t.offsetX = 0; t.offsetY = 0;
-    if (calibBoxesNorm.empty() || prodBoxes.empty()) return t;
+    GaussianBlur(gray, blurred, Size(5, 5), 0);
+    adaptiveThreshold(blurred, thresh, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY_INV, 15, 5);
 
-    vector<Rect> calibBoxesPx;
-    for (auto& r : calibBoxesNorm) {
-        calibBoxesPx.push_back(Rect((int)round(r.x * calibW), (int)round(r.y * calibH),
-                                     (int)round(r.width * calibW), (int)round(r.height * calibH)));
-    }
+    vector<vector<Point>> contours;
+    findContours(thresh, contours, RETR_LIST, CHAIN_APPROX_SIMPLE);
 
-    // Greedy match, largest calibration box first (largest = most reliable trace):
-    // pair each with whichever unclaimed production candidate has the closest aspect
-    // ratio (a border box's aspect ratio is a property of the physical page, invariant
-    // to camera position/zoom) AMONG candidates of plausible size — aspect ratio alone
-    // is not enough, since a small, spurious box (a stray text block, a divider) can by
-    // coincidence have a closer raw aspect ratio than the true, much bigger match, which
-    // silently wrecks the whole fit once its corners are mixed into the regression. The
-    // image's overall resolution ratio gives a rough (not exact — that's exactly what
-    // we're solving for) prior on how big the real match should be; anything wildly
-    // outside that range is almost certainly a different, unrelated box.
-    double roughAreaRatio = ((double)prodW * prodH) / ((double)calibW * calibH);
-    vector<bool> used(prodBoxes.size(), false);
-    vector<pair<Rect, Rect>> matches;
-    vector<int> order(calibBoxesPx.size());
-    for (size_t i = 0; i < order.size(); i++) order[i] = (int)i;
-    sort(order.begin(), order.end(), [&](int a, int b) { return calibBoxesPx[a].area() > calibBoxesPx[b].area(); });
+    double imgArea = (double)raw.cols * raw.rows;
+    vector<Point2f> candidates;
 
-    for (int ci : order) {
-        double calibAspect = (double)calibBoxesPx[ci].width / calibBoxesPx[ci].height;
-        double expectedArea = calibBoxesPx[ci].area() * roughAreaRatio;
-        int bestJ = -1; double bestDiff = 1e18;
-        for (size_t j = 0; j < prodBoxes.size(); j++) {
-            if (used[j]) continue;
-            double areaRatio = prodBoxes[j].area() / expectedArea;
-            if (areaRatio < 0.3 || areaRatio > 3.0) continue;
-            double prodAspect = (double)prodBoxes[j].width / prodBoxes[j].height;
-            double diff = fabs(prodAspect - calibAspect) / calibAspect;
-            if (diff < bestDiff) { bestDiff = diff; bestJ = (int)j; }
-        }
-        if (bestJ != -1 && bestDiff < 0.35) {
-            used[bestJ] = true;
-            matches.push_back({calibBoxesPx[ci], prodBoxes[bestJ]});
+    for (const auto& c : contours) {
+        vector<Point> approx;
+        double peri = arcLength(c, true);
+        approxPolyDP(c, approx, 0.04 * peri, true);
+
+        if (approx.size() == 4 && isContourConvex(approx)) {
+            double area = contourArea(approx);
+            Rect b = boundingRect(approx);
+            if (area > imgArea * 0.0005 && area < imgArea * 0.05) {
+                float aspect = (float)b.width / b.height;
+                if (aspect >= 0.7 && aspect <= 1.3) {
+                    Point2f center(b.x + b.width / 2.0f, b.y + b.height / 2.0f);
+                    candidates.push_back(center);
+                }
+            }
         }
     }
-    if (matches.empty()) return t;
 
-    vector<double> cx, px, cy, py;
-    for (auto& m : matches) {
-        cx.push_back(m.first.x); cx.push_back(m.first.x + m.first.width);
-        px.push_back(m.second.x); px.push_back(m.second.x + m.second.width);
-        cy.push_back(m.first.y); cy.push_back(m.first.y + m.first.height);
-        py.push_back(m.second.y); py.push_back(m.second.y + m.second.height);
+    vector<Point2f> best4;
+    if (candidates.size() >= 4) {
+        Point2f imgCorners[4] = {
+            Point2f(0, 0), Point2f(raw.cols, 0),
+            Point2f(raw.cols, raw.rows), Point2f(0, raw.rows)
+        };
+        for (int i = 0; i < 4; i++) {
+            double bestDist = 1e18;
+            Point2f bestPt;
+            int bestIdx = -1;
+            for (size_t j = 0; j < candidates.size(); j++) {
+                double dist = norm(candidates[j] - imgCorners[i]);
+                if (dist < bestDist) { bestDist = dist; bestPt = candidates[j]; bestIdx = (int)j; }
+            }
+            if (bestIdx != -1) {
+                best4.push_back(bestPt);
+                candidates.erase(candidates.begin() + bestIdx);
+            }
+        }
     }
-    auto fitLine = [](const vector<double>& x, const vector<double>& y, double& scale, double& offset) {
-        double mx = 0, my = 0;
-        for (size_t i = 0; i < x.size(); i++) { mx += x[i]; my += y[i]; }
-        mx /= x.size(); my /= y.size();
-        double num = 0, den = 0;
-        for (size_t i = 0; i < x.size(); i++) { num += (x[i] - mx) * (y[i] - my); den += (x[i] - mx) * (x[i] - mx); }
-        scale = (den > 1e-9) ? (num / den) : 1.0;
-        offset = my - scale * mx;
-    };
-    fitLine(cx, px, t.scaleX, t.offsetX);
-    fitLine(cy, py, t.scaleY, t.offsetY);
-    t.registered = true;
-    t.matchedBoxes = (int)matches.size();
-    return t;
+
+    if (best4.size() == 4) {
+        return sortCorners(best4);
+    }
+    return {};
 }
 
 // =============================================================================
@@ -573,21 +511,25 @@ struct GridBlockSpec {
     }
 };
 
+// Bump this whenever CalibrationProfile's on-disk shape changes (fields added,
+// removed, or reinterpreted) — loadProfile refuses to load a mismatched profile
+// instead of silently misreading fields a newer/older engine build meant
+// differently. A stale profile after an engine update should be a clear
+// "recalibrate" prompt in Flutter, not a quietly wrong grade.
+static const int OMR_PROFILE_SCHEMA_VERSION = 1;
+
 struct CalibrationProfile {
     int calibWidth = 0, calibHeight = 0;
     int numQuestions = 0, choicesPerQuestion = 0, questionsPerBlock = 0;
     int idLetterCount = 0, idDigitColumns = 0;
     vector<string> idLetterLabels; // defaults to A,B,C... if not provided at calibration time
     vector<GridBlockSpec> blocks;
-    // Normalized (0..1 of calibWidth/calibHeight) border-group boxes detected in the
-    // calibration photo, used to auto-register position/zoom shifts in later photos —
-    // see SHEET REGISTRATION above. Empty if the template has no detectable borders.
-    vector<Rect2d> registrationBoxesNorm;
 };
 
 bool saveProfile(const CalibrationProfile& p, const string& path) {
     FileStorage fs(path, FileStorage::WRITE);
     if (!fs.isOpened()) return false;
+    fs << "schema_version" << OMR_PROFILE_SCHEMA_VERSION;
     fs << "calib_width" << p.calibWidth;
     fs << "calib_height" << p.calibHeight;
     fs << "num_questions" << p.numQuestions;
@@ -620,18 +562,32 @@ bool saveProfile(const CalibrationProfile& p, const string& path) {
            << "}";
     }
     fs << "]";
-    fs << "registration_boxes" << "[";
-    for (auto& r : p.registrationBoxesNorm) {
-        fs << "{" << "x" << r.x << "y" << r.y << "w" << r.width << "h" << r.height << "}";
-    }
-    fs << "]";
     fs.release();
     return true;
 }
 
-bool loadProfile(CalibrationProfile& p, const string& path) {
+bool loadProfile(CalibrationProfile& p, const string& path, string* errorOut = nullptr, string* errorCodeOut = nullptr) {
     FileStorage fs(path, FileStorage::READ);
-    if (!fs.isOpened()) return false;
+    if (!fs.isOpened()) {
+        if (errorOut) *errorOut = "Profile not found or unreadable: " + path;
+        if (errorCodeOut) *errorCodeOut = "PROFILE_UNREADABLE";
+        return false;
+    }
+
+    // A profile with no schema_version field predates this check entirely —
+    // treat it the same as a mismatch rather than guessing its shape.
+    FileNode versionNode = fs["schema_version"];
+    int foundVersion = versionNode.empty() ? 0 : (int)versionNode;
+    if (foundVersion != OMR_PROFILE_SCHEMA_VERSION) {
+        if (errorOut) {
+            *errorOut = "Profile was calibrated with an older/incompatible engine version "
+                        "(profile schema " + to_string(foundVersion) + ", engine expects "
+                        + to_string(OMR_PROFILE_SCHEMA_VERSION) + "). Please recalibrate.";
+        }
+        if (errorCodeOut) *errorCodeOut = "PROFILE_OUTDATED";
+        return false;
+    }
+
     p.calibWidth = (int)fs["calib_width"];
     p.calibHeight = (int)fs["calib_height"];
     p.numQuestions = (int)fs["num_questions"];
@@ -681,13 +637,6 @@ bool loadProfile(CalibrationProfile& p, const string& path) {
         p.blocks.push_back(b);
     }
 
-    FileNode regNode = fs["registration_boxes"];
-    if (regNode.isSeq()) {
-        for (auto it = regNode.begin(); it != regNode.end(); ++it) {
-            FileNode rn = *it;
-            p.registrationBoxesNorm.push_back(Rect2d((double)rn["x"], (double)rn["y"], (double)rn["w"], (double)rn["h"]));
-        }
-    }
     return true;
 }
 
@@ -1112,11 +1061,49 @@ vector<pair<string, ClickPair>> expandAnswersBlock(const Mat& thresh, Point2f tl
 // the FFI wrapper (bs_calibrate) passes a real vector so it can hand the same diagnostic
 // messages back to Flutter as JSON instead of them only ever reaching a console no GUI
 // app has attached.
-bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<string>* logOut = nullptr) {
+bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<string>* logOut = nullptr, double* outFiducialRatio = nullptr) {
     auto logLine = [&](const string& s) { cout << s << endl; if (logOut) logOut->push_back(s); };
 
     Mat raw = imread(req.imagePath);
     if (raw.empty()) { errorMsg = "Could not read image: " + req.imagePath; return false; }
+
+    Mat H; // NEW: Declare H outside the if-block
+    vector<Point2f> corners = findCornerSquares(raw);
+    if (corners.size() == 4) {
+        vector<Point2f> dst = {
+            Point2f(0, 0), Point2f(1000, 0),
+            Point2f(1000, 1414), Point2f(0, 1414)
+        };
+        H = getPerspectiveTransform(corners, dst); // Use the outer H
+        warpPerspective(raw, raw, H, Size(1000, 1414));
+        logLine("Registration: Auto-detected 4 corner squares -> Deskewed to 1000x1414 canvas.");
+        if (outFiducialRatio) {
+            double w = norm(corners[0] - corners[1]);
+            double h = norm(corners[0] - corners[3]);
+            *outFiducialRatio = (h > 0) ? (w / h) : 1.414;
+        }
+    } else {
+        errorMsg = "Phase 2 Calibration Failed: Could not detect the 4 corner squares on the image.";
+        return false;
+    }
+
+    // NEW: Warp the raw Flutter clicks to match the flattened 1000x1414 canvas
+    vector<pair<string, ClickPair>> calibratedClicks = req.blockClicks;
+    if (!H.empty()) {
+        for (auto& bc : calibratedClicks) {
+            vector<Point2f> pts = {
+                Point2f((float)bc.second.x1, (float)bc.second.y1),
+                Point2f((float)bc.second.x2, (float)bc.second.y2)
+            };
+            vector<Point2f> warpedPts;
+            perspectiveTransform(pts, warpedPts, H);
+            bc.second.x1 = warpedPts[0].x;
+            bc.second.y1 = warpedPts[0].y;
+            bc.second.x2 = warpedPts[1].x;
+            bc.second.y2 = warpedPts[1].y;
+        }
+    }
+
     Mat thresh, gray;
     preprocess(raw, thresh, gray);
 
@@ -1148,10 +1135,10 @@ bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<stri
     // instead of a separate click-pair per answers_N sub-block. Only kicks in when the
     // request doesn't already give answers_1 explicitly, so existing per-block
     // calibration_request.yml files keep working unchanged.
-    vector<pair<string, ClickPair>> effectiveBlockClicks = req.blockClicks;
+    vector<pair<string, ClickPair>> effectiveBlockClicks = calibratedClicks;
     bool hasExplicitAnswers1 = false;
     const ClickPair* combinedAnswersClick = nullptr;
-    for (auto& bc : req.blockClicks) {
+    for (auto& bc : calibratedClicks) {
         if (bc.first == "answers_1") hasExplicitAnswers1 = true;
         if (bc.first == "answers") combinedAnswersClick = &bc.second;
     }
@@ -1184,7 +1171,7 @@ bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<stri
     // in when the request doesn't already give letter or digit_1 explicitly.
     bool hasExplicitIdColumn = false;
     const ClickPair* combinedIdClick = nullptr;
-    for (auto& bc : req.blockClicks) {
+    for (auto& bc : calibratedClicks) {
         if (bc.first == "letter" || bc.first == "digit_1") hasExplicitIdColumn = true;
         if (bc.first == "id") combinedIdClick = &bc.second;
     }
@@ -1329,12 +1316,19 @@ bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<stri
         vector<double> fills(spec.rows * spec.cols);
         int numOptions = spec.numOptions();
         vector<vector<double>> fillsByOption(numOptions);
+        vector<Point2f> colStarts(spec.cols);
+        for (int c = 0; c < spec.cols; c++) colStarts[c] = grid[0][c];
+
         for (int c = 0; c < spec.cols; c++) {
-            Point2f curr = grid[0][c];
+            Point2f curr = colStarts[c];
             for (int r = 0; r < spec.rows; r++) {
                 bool matched;
                 Bubble b = matchBubble(thresh, curr, searchRadius, spec.shape, 1.0, matched);
                 fills[r * spec.cols + c] = fillRatio(gray, b);
+
+                if (r == 0 && matched && c + 1 < spec.cols) {
+                    colStarts[c + 1] = b.center + (grid[0][c + 1] - grid[0][c]);
+                }
 
                 if (r + 1 < spec.rows) {
                     Point2f step = grid[r+1][c] - grid[r][c];
@@ -1430,21 +1424,6 @@ bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<stri
         }
     }
 
-    auto calibBorderBoxes = detectBorderBoxes(thresh);
-    for (auto& b : calibBorderBoxes) {
-        profile.registrationBoxesNorm.push_back(Rect2d((double)b.x / raw.cols, (double)b.y / raw.rows,
-                                                         (double)b.width / raw.cols, (double)b.height / raw.rows));
-    }
-    if (calibBorderBoxes.empty()) {
-        logLine("WARNING: no border-box registration anchors detected in the calibration image — "
-                "production runs will assume every later photo frames the sheet at the same "
-                "position/zoom as this calibration photo.");
-    } else {
-        ostringstream ss;
-        ss << "Detected " << calibBorderBoxes.size()
-           << " border-box registration anchor(s) — later photos will auto-correct for camera position/zoom shifts.";
-        logLine(ss.str());
-    }
 
     if (!saveProfile(profile, req.profilePath)) { errorMsg = "Failed to write profile to " + req.profilePath; return false; }
 
@@ -1560,13 +1539,13 @@ int classifySingleChoiceColumn(const Mat& thresh, const Mat& gray, Mat& output, 
                                 double searchRadius, double areaScale, const vector<vector<Point2f>>& grid) {
     vector<vector<Bubble>> bubbles(spec->rows, vector<Bubble>(1));
     vector<vector<bool>> matchedFlags(spec->rows, vector<bool>(1));
-    
+
     Point2f curr = grid[0][0];
     for (int r = 0; r < spec->rows; r++) {
         bool matched;
         bubbles[r][0] = matchBubble(thresh, curr, searchRadius, spec->shape, areaScale, matched);
         matchedFlags[r][0] = matched;
-        
+
         if (r + 1 < spec->rows) {
             Point2f step = grid[r+1][0] - grid[r][0];
             if (matched) curr = bubbles[r][0].center + step;
@@ -1623,18 +1602,20 @@ struct ProductionResult {
     vector<string> warnings;
     bool registered = false;
     int matchedBoxes = 0;
-    double scaleX = 1.0, scaleY = 1.0, offsetX = 0.0, offsetY = 0.0;
+    bool deskewed = false;
 };
 
 // result/errorOut are optional (nullptr for CLI use, which keeps relying on outJsonPath/
 // cout as before): the FFI wrapper (bs_run) passes both so it can return the full result
 // as JSON without requiring a round-trip through a file on disk.
 bool runProduction(const string& imagePath, const string& profilePath, const string& outJsonPath, const string& debugImagePath,
-                   ProductionResult* result = nullptr, string* errorOut = nullptr) {
+                   ProductionResult* result = nullptr, string* errorOut = nullptr, string* errorCodeOut = nullptr) {
     CalibrationProfile profile;
-    if (!loadProfile(profile, profilePath)) {
-        cerr << "Failed to load profile: " << profilePath << endl;
-        if (errorOut) *errorOut = "Failed to load profile: " + profilePath;
+    string profileError, profileErrorCode;
+    if (!loadProfile(profile, profilePath, &profileError, &profileErrorCode)) {
+        cerr << profileError << endl;
+        if (errorOut) *errorOut = profileError;
+        if (errorCodeOut) *errorCodeOut = profileErrorCode;
         return false;
     }
 
@@ -1642,40 +1623,33 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
     if (raw.empty()) {
         cerr << "Could not read image: " << imagePath << endl;
         if (errorOut) *errorOut = "Could not read image: " + imagePath;
+        if (errorCodeOut) *errorCodeOut = "IMAGE_UNREADABLE";
         return false;
     }
 
-    bool profileIsPortrait = profile.calibWidth < profile.calibHeight;
-    bool rawIsPortrait = raw.cols < raw.rows;
-    if (profileIsPortrait != rawIsPortrait) {
-        // Auto-rotate if the camera hardware flipped width/height compared to calibration
-        rotate(raw, raw, ROTATE_90_CLOCKWISE);
+    bool deskewed = false;
+    int matchedBoxes = 0;
+    vector<Point2f> corners = findCornerSquares(raw);
+    if (corners.size() == 4) {
+        matchedBoxes = 4;
+        vector<Point2f> dst = {
+            Point2f(0, 0), Point2f(1000, 0),
+            Point2f(1000, 1414), Point2f(0, 1414)
+        };
+        Mat H = getPerspectiveTransform(corners, dst);
+        warpPerspective(raw, raw, H, Size(1000, 1414));
+        deskewed = true;
+        cout << "Registration: Auto-detected 4 corner squares -> Deskewed to 1000x1414 canvas." << endl;
+    } else {
+        cerr << "Registration Error: Could not detect the 4 corner squares." << endl;
+        if (errorOut) *errorOut = "Registration Error: Could not detect the 4 corner squares.";
+        if (errorCodeOut) *errorCodeOut = "REGISTRATION_FAILED";
+        return false;
     }
+
     Mat thresh, gray;
     preprocess(raw, thresh, gray);
     Mat output = raw.clone();
-
-    // Auto-register this photo's sheet position/zoom against the calibration photo via
-    // matched border boxes (see SHEET REGISTRATION above) instead of assuming the sheet
-    // sits at the same pixel position/scale every time — falls back to plain proportional
-    // full-image scaling if no boxes can be matched.
-    auto prodBorderBoxes = detectBorderBoxes(thresh);
-    RegistrationTransform reg = computeRegistration(profile.registrationBoxesNorm, profile.calibWidth, profile.calibHeight,
-                                                      prodBorderBoxes, raw.cols, raw.rows);
-    if (reg.registered) {
-        cout << "Registration: matched " << reg.matchedBoxes << " border box(es) -> scaleX=" << reg.scaleX
-             << " scaleY=" << reg.scaleY << " offsetX=" << reg.offsetX << " offsetY=" << reg.offsetY << endl;
-    } else {
-        cout << "Registration: FALLBACK — no border boxes matched, assuming the sheet occupies the "
-             << "same frame position/zoom as the calibration photo (results may be off if it doesn't)." << endl;
-    }
-
-    // pixel area scales with the square of any linear resize — reg.scaleX/scaleY already
-    // capture the ACTUAL sheet scale change (from matched border boxes), which is a more
-    // accurate source than the raw image resolution ratio whenever the sheet doesn't fill
-    // the same fraction of the frame in both photos (i.e. exactly the case registration
-    // exists to correct for).
-    double areaScale = reg.scaleX * reg.scaleY;
 
     map<string, GridBlockSpec*> blockByName;
     for (auto& b : profile.blocks) blockByName[b.name] = &b;
@@ -1687,13 +1661,11 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
 
     if (profile.idLetterCount > 0 && blockByName.count("letter")) {
         auto* spec = blockByName["letter"];
-        Point2d tl(reg.scaleX * (spec->tlNorm.x * profile.calibWidth) + reg.offsetX,
-                   reg.scaleY * (spec->tlNorm.y * profile.calibHeight) + reg.offsetY);
-        Point2d br(reg.scaleX * (spec->brNorm.x * profile.calibWidth) + reg.offsetX,
-                   reg.scaleY * (spec->brNorm.y * profile.calibHeight) + reg.offsetY);
+        Point2d tl(spec->tlNorm.x * profile.calibWidth, spec->tlNorm.y * profile.calibHeight);
+        Point2d br(spec->brNorm.x * profile.calibWidth, spec->brNorm.y * profile.calibHeight);
         auto grid = interpolateGrid(tl, br, spec->rows, 1);
         double searchRadius = computeSearchRadius(grid, spec->rows, 1);
-        int bestR = classifySingleChoiceColumn(thresh, gray, output, spec, searchRadius, areaScale, grid);
+        int bestR = classifySingleChoiceColumn(thresh, gray, output, spec, searchRadius, 1.0, grid);
         if (bestR == -4) {
             letterResult = "rejected";
             warnings.push_back("LETTER: the marked bubble doesn't look like a filled-in bubble "
@@ -1710,13 +1682,11 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
         string name = "digit_" + to_string(i);
         if (!blockByName.count(name)) continue;
         auto* spec = blockByName[name];
-        Point2d tl(reg.scaleX * (spec->tlNorm.x * profile.calibWidth) + reg.offsetX,
-                   reg.scaleY * (spec->tlNorm.y * profile.calibHeight) + reg.offsetY);
-        Point2d br(reg.scaleX * (spec->brNorm.x * profile.calibWidth) + reg.offsetX,
-                   reg.scaleY * (spec->brNorm.y * profile.calibHeight) + reg.offsetY);
+        Point2d tl(spec->tlNorm.x * profile.calibWidth, spec->tlNorm.y * profile.calibHeight);
+        Point2d br(spec->brNorm.x * profile.calibWidth, spec->brNorm.y * profile.calibHeight);
         auto grid = interpolateGrid(tl, br, spec->rows, 1);
         double searchRadius = computeSearchRadius(grid, spec->rows, 1);
-        int bestR = classifySingleChoiceColumn(thresh, gray, output, spec, searchRadius, areaScale, grid);
+        int bestR = classifySingleChoiceColumn(thresh, gray, output, spec, searchRadius, 1.0, grid);
         if (bestR == -4) {
             digitResults[i - 1] = "rejected";
             warnings.push_back(name + ": the marked bubble doesn't look like a filled-in bubble "
@@ -1736,21 +1706,26 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
         int rowsInThisBlock = min(profile.questionsPerBlock, profile.numQuestions - qOffset);
         if (!blockByName.count(name)) { qOffset += rowsInThisBlock; continue; }
         auto* spec = blockByName[name];
-        Point2d tl(reg.scaleX * (spec->tlNorm.x * profile.calibWidth) + reg.offsetX,
-                   reg.scaleY * (spec->tlNorm.y * profile.calibHeight) + reg.offsetY);
-        Point2d br(reg.scaleX * (spec->brNorm.x * profile.calibWidth) + reg.offsetX,
-                   reg.scaleY * (spec->brNorm.y * profile.calibHeight) + reg.offsetY);
+        Point2d tl(spec->tlNorm.x * profile.calibWidth, spec->tlNorm.y * profile.calibHeight);
+        Point2d br(spec->brNorm.x * profile.calibWidth, spec->brNorm.y * profile.calibHeight);
         auto grid = interpolateGrid(tl, br, spec->rows, spec->cols);
         double searchRadius = computeSearchRadius(grid, spec->rows, spec->cols);
 
         vector<vector<Bubble>> optionsGrid(spec->rows, vector<Bubble>(spec->cols));
         vector<vector<bool>> matchedGrid(spec->rows, vector<bool>(spec->cols));
+        vector<Point2f> colStarts(spec->cols);
+        for (int c = 0; c < spec->cols; c++) colStarts[c] = grid[0][c];
+
         for (int c = 0; c < spec->cols; c++) {
-            Point2f curr = grid[0][c];
+            Point2f curr = colStarts[c];
             for (int r = 0; r < spec->rows; r++) {
                 bool matched;
-                optionsGrid[r][c] = matchBubble(thresh, curr, searchRadius, spec->shape, areaScale, matched);
+                optionsGrid[r][c] = matchBubble(thresh, curr, searchRadius, spec->shape, 1.0, matched);
                 matchedGrid[r][c] = matched;
+
+                if (r == 0 && matched && c + 1 < spec->cols) {
+                    colStarts[c + 1] = optionsGrid[0][c].center + (grid[0][c + 1] - grid[0][c]);
+                }
 
                 if (r + 1 < spec->rows) {
                     Point2f step = grid[r+1][c] - grid[r][c];
@@ -1838,10 +1813,9 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
         result->digits = digitResults;
         result->answers = answers;
         result->warnings = warnings;
-        result->registered = reg.registered;
-        result->matchedBoxes = reg.matchedBoxes;
-        result->scaleX = reg.scaleX; result->scaleY = reg.scaleY;
-        result->offsetX = reg.offsetX; result->offsetY = reg.offsetY;
+        result->registered = matchedBoxes > 0;
+        result->matchedBoxes = matchedBoxes;
+        result->deskewed = deskewed;
     }
 
     return true;
@@ -1906,11 +1880,13 @@ BS_API const char* bs_calibrate(const char* requestPath) {
     }
     string err;
     vector<string> log;
-    bool ok = runCalibration(req, err, &log);
+    double fiducialRatio = 1.414;
+    bool ok = runCalibration(req, err, &log, &fiducialRatio);
 
     ostringstream out;
     out << "{\"success\":" << (ok ? "true" : "false")
         << ",\"error\":" << jsonStr(err)
+        << ",\"fiducial_ratio\":" << fiducialRatio
         << ",\"log\":" << jsonStrArray(log) << "}";
     return dupString(out.str());
 }
@@ -1918,7 +1894,7 @@ BS_API const char* bs_calibrate(const char* requestPath) {
 BS_API const char* bs_run(const char* imagePath, const char* profilePath, const char* debugImagePath) {
     using namespace ffi_detail;
     ProductionResult r;
-    string err;
+    string err, errorCode;
     bool ok = false;
     // Deliberately falls through to the SAME JSON-building code below on every path
     // (null args, a failed runProduction, or a clean run) rather than early-returning a
@@ -1930,13 +1906,15 @@ BS_API const char* bs_run(const char* imagePath, const char* profilePath, const 
     // read — always check "success" before trusting array lengths).
     if (!imagePath || !profilePath) {
         err = "imagePath/profilePath is null";
+        errorCode = "INVALID_ARGS";
     } else {
-        ok = runProduction(imagePath, profilePath, "", debugImagePath ? debugImagePath : "", &r, &err);
+        ok = runProduction(imagePath, profilePath, "", debugImagePath ? debugImagePath : "", &r, &err, &errorCode);
     }
 
     ostringstream out;
     out << "{\"success\":" << (ok ? "true" : "false")
         << ",\"error\":" << jsonStr(err)
+        << ",\"error_code\":" << jsonStr(errorCode)
         << ",\"letter\":" << jsonStr(r.letter)
         << ",\"digits\":" << jsonStrArray(r.digits)
         << ",\"answers\":" << jsonStrArray(r.answers)
@@ -1944,10 +1922,7 @@ BS_API const char* bs_run(const char* imagePath, const char* profilePath, const 
         << ",\"registration\":{"
         << "\"matched\":" << (r.registered ? "true" : "false")
         << ",\"matched_boxes\":" << r.matchedBoxes
-        << ",\"scale_x\":" << r.scaleX
-        << ",\"scale_y\":" << r.scaleY
-        << ",\"offset_x\":" << r.offsetX
-        << ",\"offset_y\":" << r.offsetY
+        << ",\"deskewed\":" << (r.deskewed ? "true" : "false")
         << "}}";
     return dupString(out.str());
 }

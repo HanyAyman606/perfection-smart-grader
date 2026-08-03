@@ -1,8 +1,6 @@
-<<<<<<< HEAD
-// WebSocket client
-=======
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/exam_models.dart';
 
@@ -127,12 +125,19 @@ class WebSocketClient {
       if (type == 'pong') {
         // Just heartbeat reply, nothing to do
       } else if (type == 'auth_result') {
-        final status = data['status'];
+        final status = data['status'] as String?;
         if (status == 'success') {
           _reconnectAttempt = 0; // Reset backoff on successful auth
           _updateStatus(ConnectionStatus.connected);
           _startPingTimer();
-          
+
+          // TEMP DEBUG: dump the exact raw master_packet JSON as received,
+          // to compare directly against the desktop's "VIEW RAW JSON" preview.
+          // Remove once verified.
+          debugPrint('=== RECEIVED master_packet ===');
+          debugPrint(const JsonEncoder.withIndent('  ').convert(data['master_packet']));
+          debugPrint('=== END master_packet ===');
+
           final packet = MasterPacket.fromJson(data['master_packet'] as Map<String, dynamic>);
           _eventController.add(AuthSuccess(packet));
         } else {
@@ -218,6 +223,10 @@ class WebSocketClient {
 
   void submitScore(Map<String, dynamic> payload) {
     if (_currentStatus == ConnectionStatus.connected) {
+      // TEMP DEBUG: remove once verified.
+      debugPrint('=== SENDING submit_score ===');
+      debugPrint(const JsonEncoder.withIndent('  ').convert(payload));
+      debugPrint('=== END submit_score ===');
       _channel?.sink.add(jsonEncode(payload));
     }
   }
@@ -252,4 +261,3 @@ class WebSocketClient {
     _eventController.close();
   }
 }
->>>>>>> af9284c712fd3317b7fecb1c4c6ba726ec81c9a6

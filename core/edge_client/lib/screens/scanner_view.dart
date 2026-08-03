@@ -1,14 +1,14 @@
-<<<<<<< HEAD
-// Camera scanner UI
-=======
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/exam_session_provider.dart';
 import '../services/alignment_heuristic.dart';
+import '../widgets/scanner_guide_painter.dart';
 import '../services/omr_service.dart';
 import 'grading_review_screen.dart';
+import 'calibration_screen.dart'; // Needed for routing
 
 class ScannerView extends StatefulWidget {
   const ScannerView({super.key});
@@ -25,6 +25,10 @@ class _ScannerViewState extends State<ScannerView> {
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _initCamera();
   }
 
@@ -52,29 +56,45 @@ class _ScannerViewState extends State<ScannerView> {
 
   void _processCameraFrame(CameraImage image) {
     if (_isProcessing) return;
-
     final aligned = AlignmentHeuristic.looksAligned(image);
     if (aligned != _isAligned) {
-      if (mounted) {
-        setState(() {
-          _isAligned = aligned;
-        });
-      }
+      if (mounted) setState(() { _isAligned = aligned; });
     }
+  }
+
+  void _triggerRecalibration() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Recalibrate Template?'),
+        content: const Text('Recalibrating won\'t affect scores you\'ve already submitted. Continue?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const CalibrationScreen()),
+              );
+            },
+            child: const Text('Recalibrate', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _captureAndGrade() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
     if (_isProcessing) return;
 
-    setState(() {
-      _isProcessing = true;
-    });
+    setState(() { _isProcessing = true; });
 
     try {
       await _controller!.stopImageStream();
+      await Future.delayed(const Duration(milliseconds: 200));
+
       final photo = await _controller!.takePicture();
-      
       final session = Provider.of<ExamSessionProvider>(context, listen: false);
       final master = session.masterPacket!;
       final version = session.selectedVersion ?? master.answerVersions.first;
@@ -91,30 +111,36 @@ class _ScannerViewState extends State<ScannerView> {
         Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => const GradingReviewScreen()),
         ).then((_) {
-          // Restart stream when coming back
-          if (mounted && _controller != null) {
-            _controller!.startImageStream(_processCameraFrame);
+          if (mounted) {
+            _controller?.dispose();
+            _initCamera();
           }
         });
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Grading failed: $e')),
-        );
+        final String message;
+        if (e is OmrEngineException && e.needsRetake) {
+          message = "Couldn't align the sheet — please retake the photo.";
+        } else if (e is OmrEngineException && e.needsRecalibration) {
+          message = "This template needs to be recalibrated before scanning can continue.";
+        } else {
+          message = 'Grading failed: $e';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 5)));
         _controller?.startImageStream(_processCameraFrame);
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
-      }
+      if (mounted) setState(() { _isProcessing = false; });
     }
   }
 
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp, DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight,
+    ]);
     _controller?.stopImageStream();
     _controller?.dispose();
     super.dispose();
@@ -123,34 +149,32 @@ class _ScannerViewState extends State<ScannerView> {
   @override
   Widget build(BuildContext context) {
     if (_controller == null || !_controller!.value.isInitialized) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final guideColor = _isAligned ? Colors.green : Colors.redAccent;
     final session = context.watch<ExamSessionProvider>();
 
-    // Guide frame: landscape default (width > height).
-    // Uses 1.414 landscape ratio (A4 sideways) as a default before calibration.
-    // TODO: Once calibrated, derive the exact aspect ratio from the calibration
-    // reference photo's real dimensions via image_size.dart.
-    final guideWidth = MediaQuery.of(context).size.width * 0.9;
-    final guideHeight = guideWidth / 1.414; // Landscape: wider than tall
+    final media = MediaQuery.of(context).size;
+    final isPortrait = media.height > media.width;
+    final guideHeight = media.height * 0.82;
+    final guideWidth = guideHeight * session.fiducialRatio;
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Scanning: ${session.masterPacket?.examName ?? ""}'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Recalibrate Template',
+            onPressed: _triggerRecalibration,
+          ),
           if (session.masterPacket != null && session.masterPacket!.supportsMultipleVersions)
             DropdownButton<String>(
               value: session.selectedVersion,
               dropdownColor: Colors.grey[850],
               items: session.masterPacket!.answerVersions.map((v) {
-                return DropdownMenuItem(
-                  value: v,
-                  child: Text('Version $v'),
-                );
+                return DropdownMenuItem(value: v, child: Text('Version $v'));
               }).toList(),
               onChanged: (val) {
                 if (val != null) session.selectVersion(val);
@@ -160,40 +184,43 @@ class _ScannerViewState extends State<ScannerView> {
       ),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: CameraPreview(_controller!),
-          ),
-          Center(
-            child: Container(
-              width: guideWidth,
-              height: guideHeight,
-              decoration: BoxDecoration(
-                border: Border.all(color: guideColor, width: 4),
-                borderRadius: BorderRadius.circular(8),
+          Positioned.fill(child: CameraPreview(_controller!)),
+          if (isPortrait)
+            Positioned.fill(
+              child: Container(
+                color: Colors.red.withOpacity(0.8),
+                alignment: Alignment.center,
+                child: const Text(
+                  'Please hold your phone sideways\n(Landscape) to scan.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
-          ),
-          if (_isProcessing)
-            const Positioned.fill(
+          if (!isPortrait) ...[
+            Positioned.fill(
+              child: CustomPaint(
+                painter: ScannerGuidePainter(
+                  cutoutSize: Size(guideWidth, guideHeight),
+                  bracketColor: guideColor,
+                ),
+              ),
+            ),
+            if (_isProcessing)
+              const Positioned.fill(child: Center(child: CircularProgressIndicator())),
+            Positioned(
+              bottom: 40, left: 0, right: 0,
               child: Center(
-                child: CircularProgressIndicator(),
+                child: FloatingActionButton(
+                  onPressed: _isProcessing ? null : _captureAndGrade,
+                  backgroundColor: _isAligned ? Colors.green : Colors.grey,
+                  child: const Icon(Icons.camera),
+                ),
               ),
             ),
-          Positioned(
-            bottom: 40,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: FloatingActionButton(
-                onPressed: _isProcessing ? null : _captureAndGrade,
-                backgroundColor: _isAligned ? Colors.green : Colors.grey,
-                child: const Icon(Icons.camera),
-              ),
-            ),
-          ),
+          ],
         ],
       ),
     );
   }
 }
->>>>>>> af9284c712fd3317b7fecb1c4c6ba726ec81c9a6

@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-// Flutter entry point
-=======
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -58,4 +55,3 @@ class NexusEdgeApp extends StatelessWidget {
     );
   }
 }
->>>>>>> af9284c712fd3317b7fecb1c4c6ba726ec81c9a6

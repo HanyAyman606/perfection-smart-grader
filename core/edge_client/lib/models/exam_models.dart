@@ -30,33 +30,6 @@ class McqRange {
   }
 }
 
-class RosterEntry {
-  final String id;
-  final String name;
-  final int present;
-
-  RosterEntry({
-    required this.id,
-    required this.name,
-    required this.present,
-  });
-
-  factory RosterEntry.fromJson(Map<String, dynamic> json) {
-    return RosterEntry(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      present: json['present'] as int,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'present': present,
-    };
-  }
-}
 
 class MasterPacket {
   final String examName;
@@ -68,7 +41,6 @@ class MasterPacket {
   final String templatePath;
   final Map<String, dynamic> roiCoordinates;
   final String groupName;
-  final List<RosterEntry> roster;
   final List<String> answerVersions; // ["A"] for quiz mode
   final Map<String, Map<String, String>> modelAnswers; // {version: {"1":"A",...}}
   final Map<String, List<int>> voidedQuestions; // {version: [4,7]}
@@ -89,7 +61,6 @@ class MasterPacket {
     required this.templatePath,
     required this.roiCoordinates,
     required this.groupName,
-    required this.roster,
     required this.answerVersions,
     required this.modelAnswers,
     required this.voidedQuestions,
@@ -129,9 +100,6 @@ class MasterPacket {
       templatePath: json['template_path'] as String? ?? json['templatePath'] as String? ?? "",
       roiCoordinates: json['roi_coordinates'] as Map<String, dynamic>? ?? json['roiCoordinates'] as Map<String, dynamic>? ?? {},
       groupName: json['group_name'] as String? ?? json['groupName'] as String? ?? "",
-      roster: (json['roster'] as List? ?? [])
-          .map((e) => RosterEntry.fromJson(e as Map<String, dynamic>))
-          .toList(),
       answerVersions: (json['answer_versions'] as List? ?? json['answerVersions'] as List? ?? []).map((e) => e as String).toList(),
       modelAnswers: (json['model_answers'] as Map? ?? json['modelAnswers'] as Map? ?? {}).map(
         (k, v) => MapEntry(
@@ -149,7 +117,7 @@ class MasterPacket {
       // hasn't been updated to include them yet, but log a warning.
       choicesPerQuestion: json['choices_per_question'] as int? ?? json['choicesPerQuestion'] as int? ?? 4,
       questionsPerBlock: json['questions_per_block'] as int? ?? json['questionsPerBlock'] as int? ?? 10,
-      idLetterCount: json['id_letter_count'] as int? ?? json['idLetterCount'] as int? ?? 0,
+      idLetterCount: json['id_letter_count'] as int? ?? json['idLetterCount'] as int? ?? 6,
       idDigitColumns: json['id_digit_columns'] as int? ?? json['idDigitColumns'] as int? ?? 0,
     );
   }
@@ -165,7 +133,6 @@ class MasterPacket {
       'template_path': templatePath,
       'roi_coordinates': roiCoordinates,
       'group_name': groupName,
-      'roster': roster.map((e) => e.toJson()).toList(),
       'answer_versions': answerVersions,
       'model_answers': modelAnswers,
       'voided_questions': voidedQuestions,
@@ -208,18 +175,22 @@ class Mistake {
 class GradeResult {
   String? studentId; // MUTABLE — null until OCR or manual entry resolves it
   String idSource; // "ocr" | "manual"
+  String? groupType; // MUTABLE — null until OCR (bubble read) or manual entry resolves it
   final String answerVersion;
   final double mcqScore;
   final List<Mistake> mistakes;
+  final String? imagePath;
   double essayTotal; // MUTABLE — proctor types this in
 
   GradeResult({
     this.studentId,
     required this.idSource,
+    this.groupType,
     required this.answerVersion,
     required this.mcqScore,
     required this.mistakes,
     required this.essayTotal,
+    this.imagePath,
   });
 
   double get totalScore => mcqScore + essayTotal;
@@ -228,6 +199,7 @@ class GradeResult {
     return {
       "type": "submit_score",
       "student_id": studentId,
+      "group_type": groupType,
       "answer_version": answerVersion,
       "mcq_score": mcqScore,
       "essay_total": essayTotal,

@@ -4,6 +4,11 @@
 *.pyc
 *.swp
 .DS_Store
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
 .atom/
 .build/
 .buildlog/
@@ -27,6 +32,7 @@ migrate_working_dir/
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
@@ -46,5 +52,9 @@ app.*.map.json
 
 # Nexus Edge native additions
 /native_cv/build_android/
+native_cv/build/
 /android/app/src/main/jniLibs/**/*.so
 /android/app/src/main/jniLibs/**/*.dll
+*.so
+*.dll
+*.dylib

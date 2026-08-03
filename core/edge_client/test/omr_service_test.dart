@@ -35,8 +35,8 @@ void main() {
         'answers': ['A', 'B', 'X', 'D', 'A'] // Index 2 (Q3) is 'X' but it's voided
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
-      
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
+
       // Expected score: Q1(1) + Q2(1) + Q4(2) + Q5(2) = 6
       expect(result.mcqScore, 6.0);
       expect(result.mistakes, isEmpty);
@@ -50,8 +50,8 @@ void main() {
         'answers': ['B', 'B', 'C', 'D', 'A'] // Q1 is 'B' but correct is 'A'
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
-      
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
+
       // Expected score: Q2(1) + Q4(2) + Q5(2) = 5
       expect(result.mcqScore, 5.0);
       expect(result.mistakes.length, 1);
@@ -67,7 +67,7 @@ void main() {
         'digits': ['1', '2', '3'],
         'answers': ['A', 'B', 'Z', 'D', 'A'] // Z for voided Q3
       };
-      final resultIncorrect = OmrService.instance.buildGradeResult(rawIncorrect, masterPacket, 'A');
+      final resultIncorrect = OmrService.instance.buildGradeResult(rawIncorrect, masterPacket, 'A', null);
       expect(resultIncorrect.mcqScore, 6.0);
       expect(resultIncorrect.mistakes, isEmpty);
 
@@ -77,7 +77,7 @@ void main() {
         'digits': ['1', '2', '3'],
         'answers': ['A', 'B', 'C', 'D', 'A'] // C for voided Q3
       };
-      final resultCorrect = OmrService.instance.buildGradeResult(rawCorrect, masterPacket, 'A');
+      final resultCorrect = OmrService.instance.buildGradeResult(rawCorrect, masterPacket, 'A', null);
       expect(resultCorrect.mcqScore, 6.0);
       expect(resultCorrect.mistakes, isEmpty);
     });
@@ -104,11 +104,11 @@ void main() {
         'success': true,
         'letter': 'A',
         'digits': ['1', '2', '3'],
-        'answers': ['A', 'B', 'C', 'D', 'A'] 
+        'answers': ['A', 'B', 'C', 'D', 'A']
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterNoAnsQ5, 'A');
-      
+      final result = OmrService.instance.buildGradeResult(raw, masterNoAnsQ5, 'A', null);
+
       // Expected score: Q1(1) + Q2(1) + Q3(1) + Q4(2) = 5
       expect(result.mcqScore, 5.0);
       expect(result.mistakes, isEmpty); // Q5 should not generate a mistake
@@ -119,26 +119,26 @@ void main() {
         'success': true,
         'letter': 'A',
         'digits': ['1', '2', '3'],
-        'answers': ['blank', 'multiple_marks', 'C', 'rejected', 'A'] 
+        'answers': ['blank', 'multiple_marks', 'C', 'rejected', 'A']
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
-      
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
+
       // Q1: blank -> Mistake
       // Q2: multiple_marks -> Mistake
       // Q3: voided -> skipped
       // Q4: rejected -> Mistake
       // Q5: A -> correct
-      
+
       expect(result.mcqScore, 2.0); // Only Q5 gives 2 points
       expect(result.mistakes.length, 3);
-      
+
       expect(result.mistakes[0].question, 1);
       expect(result.mistakes[0].given, 'blank');
-      
+
       expect(result.mistakes[1].question, 2);
       expect(result.mistakes[1].given, 'multiple_marks');
-      
+
       expect(result.mistakes[2].question, 4);
       expect(result.mistakes[2].given, 'rejected');
     });
@@ -151,7 +151,7 @@ void main() {
         'answers': ['A', 'B', 'C', 'D', 'A']
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
       expect(result.studentId, 'C127');
       expect(result.idSource, 'ocr');
     });
@@ -164,7 +164,7 @@ void main() {
         'answers': ['A', 'B', 'C', 'D', 'A']
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
       expect(result.studentId, isNull);
       expect(result.idSource, 'manual');
     });
@@ -177,7 +177,7 @@ void main() {
         'answers': ['A', 'B', 'C', 'D', 'A']
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
       expect(result.studentId, isNull);
       expect(result.idSource, 'manual');
     });
@@ -187,7 +187,7 @@ void main() {
         'success': true,
         'letter': 'A',
         'digits': ['1', '2', '3'],
-        'answers': ['B', 'B', 'A', 'A', 'A'] 
+        'answers': ['B', 'B', 'A', 'A', 'A']
         // Q1: B (wrong) -> 0/1pt
         // Q2: B (correct) -> 1pt
         // Q3: voided -> skipped
@@ -195,7 +195,7 @@ void main() {
         // Q5: A (correct) -> 2pts
       };
 
-      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A');
+      final result = OmrService.instance.buildGradeResult(raw, masterPacket, 'A', null);
       
       expect(result.mcqScore, 3.0);
       expect(result.mistakes.length, 2);

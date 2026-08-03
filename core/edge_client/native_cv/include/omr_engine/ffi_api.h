@@ -106,6 +106,15 @@ BS_API const char* bs_calibrate(const char* requestPath);
 // Returns JSON:
 //   {
 //     "success": bool, "error": string,
+//     "error_code": string,       // "" on success. Stable machine-readable reason for a
+//                                  // failure — match on THIS, never on "error"'s prose, since
+//                                  // the human-readable message may be reworded independently.
+//                                  // One of: "INVALID_ARGS", "PROFILE_UNREADABLE" (no profile
+//                                  // at that path — needs calibration), "PROFILE_OUTDATED" (a
+//                                  // profile from an older/incompatible engine build — needs
+//                                  // recalibration, not a retake), "IMAGE_UNREADABLE" (the
+//                                  // photo file itself was unreadable), "REGISTRATION_FAILED"
+//                                  // (couldn't find all 4 corner markers — needs a retake).
 //     "letter": string,           // one of profile's id_letter_labels, or "blank" (no
 //                                  // mark cleared threshold), "multiple_marks" (two-plus
 //                                  // clean marks with comparable ink — needs a human),
@@ -119,14 +128,23 @@ BS_API const char* bs_calibrate(const char* requestPath);
 //                                  // which options, why) — never fatal; "success" can be
 //                                  // true with a non-empty warnings list
 //     "registration": {
-//       "matched": bool,          // false means no border-box anchors could be matched
-//                                  // against the calibration photo, so this photo's
-//                                  // framing is ASSUMED identical to calibration's —
-//                                  // results are more trustworthy when true
-//       "matched_boxes": int,
-//       "scale_x": double, "scale_y": double, "offset_x": double, "offset_y": double
+//       "matched": bool,          // whether all 4 printed corner markers were found and the
+//                                  // image was successfully deskewed against the calibration
+//                                  // photo's geometry. Registration is fail-closed: if this
+//                                  // would be false, "success" is ALSO false and nothing in
+//                                  // "letter"/"digits"/"answers" was graded — there is no
+//                                  // lower-trust degrade-and-grade-anyway path. Flutter should
+//                                  // show a "couldn't align the sheet, please retake" prompt
+//                                  // whenever "success" is false, using "error" for the reason.
+//       "matched_boxes": int,     // 4 when matched, 0 otherwise (not a partial/fuzzy count)
+//       "deskewed": bool          // whether the perspective warp was actually applied to the
+//                                  // image before grading (true whenever "matched" is true)
 //     }
 //   }
+// A profile written by an older/incompatible engine build (see OMR_PROFILE_SCHEMA_VERSION
+// in omr_engine.cpp) also reports "success": false, with "error" explaining the mismatch and
+// asking for recalibration — treat this the same as a registration failure in the UI: prompt
+// to recalibrate rather than retake, since retaking a photo won't fix a stale profile.
 // "multiple_marks" and "rejected" are deliberately never resolved into a guessed
 // letter — Flutter should route both to manual review rather than auto-scoring them.
 BS_API const char* bs_run(const char* imagePath, const char* profilePath, const char* debugImagePath);

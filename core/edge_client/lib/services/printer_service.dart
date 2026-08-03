@@ -83,6 +83,8 @@ class PrinterService {
   Future<void> printReceipt({
     required String examName,
     required String studentId,
+    String? groupType,
+    String? answerVersion,
     required double totalScore,
     required double mcqScore,
     required double essayScore,
@@ -97,6 +99,8 @@ class PrinterService {
     buffer.writeln(examName.toUpperCase());
     buffer.writeln("----------------------------");
     buffer.writeln("Student ID: $studentId");
+    if (groupType != null && groupType.isNotEmpty) buffer.writeln("Group: $groupType");
+    if (answerVersion != null && answerVersion.isNotEmpty) buffer.writeln("Booklet: $answerVersion");
     buffer.writeln("FINAL GRADE: $totalScore");
     buffer.writeln("----------------------------");
     
