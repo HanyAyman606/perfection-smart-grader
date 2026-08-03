@@ -19,7 +19,7 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QTimer
 
 from admin_dashboard.theme import (
     Fonts, build_global_stylesheet, SKY_AQUA, TEXT_MUTED, CLOUDY_SKY,
-    RASPBERRY_PLUM, NEON_PINK, INDIGO_BLOOM
+    RASPBERRY_PLUM, NEON_PINK, INDIGO_BLOOM, BG_PANEL
 )
 from admin_dashboard.project_manager import ProjectManager, CONFIG_FILENAME
 from admin_dashboard.widgets.common import PulsingDot, NavButton, GridBackground, ScanlineOverlay
@@ -30,6 +30,7 @@ from admin_dashboard.pages.templates_page import TemplatesPage
 from admin_dashboard.pages.session_pages import SessionManagerPage
 from admin_dashboard.pages.model_answer_page import ModelAnswerPage
 from admin_dashboard.screens.dialogs import show_error
+from admin_dashboard.network_utils import get_local_ip
 
 NAV_SETUP, NAV_ANSWER_KEY, NAV_TEMPLATES, NAV_SESSION = range(4)
 
@@ -105,6 +106,9 @@ class CyberpunkDashboard(QMainWindow):
         so the admin can pick or create a different project."""
         self.welcome_screen.refresh_last_session_card()
         self.master_stack.setCurrentIndex(1)
+
+    def _refresh_ip_display(self):
+        self.ip_value_lbl.setText(get_local_ip())
     # ------------------------------------------------------------------
     # DASHBOARD CHROME (topbar / sidebar / content)
     # ------------------------------------------------------------------
@@ -219,6 +223,40 @@ class CyberpunkDashboard(QMainWindow):
                 """)
         btn_switch_workspace.clicked.connect(self.return_to_hub)
         sidebar_layout.addWidget(btn_switch_workspace)
+
+        self.ip_card = QFrame()
+        self.ip_card.setStyleSheet(f"""
+                    QFrame {{ background-color: {BG_PANEL if 'BG_PANEL' in dir() else 'transparent'}; border: 2px solid {SKY_AQUA}; border-radius: 10px; }}
+                """)
+        ip_layout = QVBoxLayout(self.ip_card)
+        ip_layout.setContentsMargins(12, 10, 12, 10)
+        ip_layout.setSpacing(2)
+
+        ip_title = QLabel("MOBILE CONNECT IP")
+        ip_title.setFont(_font(self.fonts.mono, 8, "Bold"))
+        ip_title.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px; background: transparent; border: none;")
+
+        ip_row = QHBoxLayout()
+        self.ip_value_lbl = QLabel(get_local_ip())
+        self.ip_value_lbl.setFont(_font(self.fonts.orbitron, 13, "Black"))
+        self.ip_value_lbl.setStyleSheet(f"color: {SKY_AQUA}; background: transparent; border: none;")
+
+        btn_refresh_ip = QPushButton("⟳")
+        btn_refresh_ip.setFixedSize(24, 24)
+        btn_refresh_ip.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_refresh_ip.setStyleSheet(f"""
+                    QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; border: none; font-weight: bold; }}
+                    QPushButton:hover {{ color: {SKY_AQUA}; }}
+                """)
+        btn_refresh_ip.clicked.connect(self._refresh_ip_display)
+
+        ip_row.addWidget(self.ip_value_lbl)
+        ip_row.addStretch()
+        ip_row.addWidget(btn_refresh_ip)
+
+        ip_layout.addWidget(ip_title)
+        ip_layout.addLayout(ip_row)
+        sidebar_layout.addWidget(self.ip_card)
 
 
         footer = QLabel("v2.4.1 · SECURE LINK")

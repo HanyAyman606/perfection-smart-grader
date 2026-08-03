@@ -65,7 +65,13 @@ class SessionManagerPage(QWidget):
         group_registry.group_renamed.connect(lambda _old, _new: self.refresh_group_hub())
 
     def reset_to_hub(self):
-        """Called by the dashboard whenever this page becomes active again."""
+        """Called by the dashboard whenever this page becomes active again.
+        If a live grading session is already running in the background,
+        show a button to jump straight back into monitoring instead of
+        silently dropping the admin back to the hub with no way back."""
+        is_live = self.server_thread is not None and self.server_thread.isRunning()
+        self.btn_return_to_live.setVisible(is_live)
+
         self.sub_stack.setCurrentIndex(0)
         self.refresh_group_hub()
 
@@ -75,6 +81,20 @@ class SessionManagerPage(QWidget):
     def _build_group_hub_ui(self):
         page = QWidget()
         content_layout = build_page_shell(page, "Groups & Rosters Hub", NEON_PINK, self.fonts.orbitron)
+
+        self.btn_return_to_live = QPushButton("🔴 RETURN TO LIVE SESSION")
+        self.btn_return_to_live.setFont(QFont(self.fonts.orbitron, 12, QFont.Weight.Bold))
+        self.btn_return_to_live.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_return_to_live.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {NEON_PINK}; color: #ffffff;
+                        border: none; border-radius: 10px; padding: 16px;
+                    }}
+                    QPushButton:hover {{ background-color: #d81d6f; }}
+                """)
+        self.btn_return_to_live.clicked.connect(lambda: self.sub_stack.setCurrentIndex(2))
+        self.btn_return_to_live.setVisible(False)
+        content_layout.addWidget(self.btn_return_to_live)
 
         btn_add_group = QPushButton("+ ADD NEW GROUP")
         btn_add_group.setFont(QFont(self.fonts.orbitron, 12, QFont.Weight.Bold))
@@ -443,6 +463,7 @@ class SessionManagerPage(QWidget):
             self.server_thread.phone_connected.connect(self._on_phone_status_changed)
             self.server_thread.phone_disconnected.connect(self._on_phone_status_changed)
             self.server_thread.score_saved.connect(self._on_score_saved)
+            self.server_thread.score_removed.connect(self._on_score_removed)
             self.server_thread.start()
 
             self._scores_saved_count = 0
@@ -471,11 +492,16 @@ class SessionManagerPage(QWidget):
         self._scores_saved_count += 1
         self.card_scores_saved.update_value(str(self._scores_saved_count))
 
+    def _on_score_removed(self, _student_id):
+        self._scores_saved_count = max(0, self._scores_saved_count - 1)
+        self.card_scores_saved.update_value(str(self._scores_saved_count))
+
     def stop_server_and_return(self):
         if self.server_thread is not None and self.server_thread.isRunning():
             self.server_thread.stop()
             self.server_thread.wait()
 
+        self.btn_return_to_live.setVisible(False)
         self.refresh_group_hub()
         self.sub_stack.setCurrentIndex(0)
 

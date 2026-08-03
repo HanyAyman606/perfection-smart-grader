@@ -223,7 +223,8 @@ class ProjectManager:
         df = pd.DataFrame(grades, columns=[
             "student_id", "group_type", "answer_version", "mcq_score", "essay_total", "final_score", "timestamp"
         ])
-        df.columns = ["Student ID", "Group Type", "Exam Version", "MCQ Score", "Essay Score", "Final Score", "Timestamp"]
+        df = df[["student_id", "group_type", "final_score"]]
+        df.columns = ["Student ID", "Group Type", "Total Score"]
         df.to_excel(save_path, index=False)
     # ------------------------------------------------------------------
     # Sync packet sent to mobile clients over the socket

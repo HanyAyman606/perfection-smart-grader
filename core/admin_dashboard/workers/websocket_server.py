@@ -73,6 +73,7 @@ class WebSocketServer(QThread):
     phone_connected = Signal(str)
     phone_disconnected = Signal(str)
     score_saved = Signal(str, float)
+    score_removed = Signal(str)
 
     def __init__(self, packet_data: dict, db_path: str, session_id: str, group_name: str,
                  session_password: str = DEFAULT_SESSION_PASSWORD):
@@ -322,8 +323,9 @@ class WebSocketServer(QThread):
 
         elif action == "discard_both":
             self.repo.discard_grade(student_id)
+            self.score_removed.emit(student_id)
 
-        # "keep_previous" -> no DB action.
+            # "keep_previous" -> no DB action.
 
         await websocket.send(json.dumps({
             "type": "resolve_duplicate_result",
