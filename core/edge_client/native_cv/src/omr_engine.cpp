@@ -371,6 +371,8 @@ vector<Point2f> findCornerSquares(const Mat& raw) {
     double imgArea = (double)raw.cols * raw.rows;
     vector<Point2f> candidates;
 
+    vector<double> candidateAreas;
+
     for (const auto& c : contours) {
         vector<Point> approx;
         double peri = arcLength(c, true);
@@ -382,38 +384,73 @@ vector<Point2f> findCornerSquares(const Mat& raw) {
             if (area > imgArea * 0.0005 && area < imgArea * 0.05) {
                 float aspect = (float)b.width / b.height;
                 if (aspect >= 0.7 && aspect <= 1.3) {
+                    // A real fiducial is a solid printed square, not just a
+                    // quad-shaped contour — shadows, page edges, folds, and
+                    // other stacked sheets peeking into frame can all produce
+                    // convex near-square contours without being solid black.
+                    // Require the box interior to actually be dark.
+                    Rect safeB = b & Rect(0, 0, gray.cols, gray.rows);
+                    if (safeB.width < 3 || safeB.height < 3) continue;
+                    Scalar meanVal = mean(gray(safeB));
+                    if (meanVal[0] > 110) continue; // too light to be the filled square
+
                     Point2f center(b.x + b.width / 2.0f, b.y + b.height / 2.0f);
                     candidates.push_back(center);
+                    candidateAreas.push_back(area);
                 }
             }
         }
     }
 
     vector<Point2f> best4;
+    vector<double> best4Areas;
     if (candidates.size() >= 4) {
         Point2f imgCorners[4] = {
             Point2f(0, 0), Point2f(raw.cols, 0),
             Point2f(raw.cols, raw.rows), Point2f(0, raw.rows)
         };
+        // A match farther than this from the corner it's supposed to occupy
+        // is not a plausible fiducial for that corner — better to fail the
+        // whole registration than silently anchor to an unrelated blob
+        // (e.g. another sheet's corner mark visible in a stacked photo).
+        double maxCornerDist = 0.6 * norm(Point2f((float)raw.cols, (float)raw.rows));
         for (int i = 0; i < 4; i++) {
             double bestDist = 1e18;
             Point2f bestPt;
+            double bestArea = 0;
             int bestIdx = -1;
             for (size_t j = 0; j < candidates.size(); j++) {
                 double dist = norm(candidates[j] - imgCorners[i]);
-                if (dist < bestDist) { bestDist = dist; bestPt = candidates[j]; bestIdx = (int)j; }
+                if (dist < bestDist) { bestDist = dist; bestPt = candidates[j]; bestArea = candidateAreas[j]; bestIdx = (int)j; }
             }
-            if (bestIdx != -1) {
+            if (bestIdx != -1 && bestDist <= maxCornerDist) {
                 best4.push_back(bestPt);
+                best4Areas.push_back(bestArea);
                 candidates.erase(candidates.begin() + bestIdx);
+                candidateAreas.erase(candidateAreas.begin() + bestIdx);
             }
         }
     }
 
-    if (best4.size() == 4) {
-        return sortCorners(best4);
-    }
-    return {};
+    if (best4.size() != 4) return {};
+
+    // Consistency check: the 4 real fiducials are printed identically, so
+    // their detected areas should be similar. A big spread means at least
+    // one "corner" is actually unrelated clutter (or a different sheet).
+    double minArea = *min_element(best4Areas.begin(), best4Areas.end());
+    double maxArea = *max_element(best4Areas.begin(), best4Areas.end());
+    if (maxArea > minArea * 3.0) return {};
+
+    // The 4 points should span a plausible sheet, not a tiny cluster in one
+    // corner of the photo — a real registration covers most of the frame.
+    Rect spanBox = boundingRect(vector<Point>{
+        Point(best4[0]), Point(best4[1]), Point(best4[2]), Point(best4[3])
+    });
+    if (spanBox.width < raw.cols * 0.4 || spanBox.height < raw.rows * 0.4) return {};
+
+    cornerSubPix(gray, best4, Size(5, 5), Size(-1, -1),
+                 TermCriteria(TermCriteria::EPS + TermCriteria::COUNT, 40, 0.001));
+    return sortCorners(best4);
 }
 
 // =============================================================================
@@ -516,7 +553,7 @@ struct GridBlockSpec {
 // instead of silently misreading fields a newer/older engine build meant
 // differently. A stale profile after an engine update should be a clear
 // "recalibrate" prompt in Flutter, not a quietly wrong grade.
-static const int OMR_PROFILE_SCHEMA_VERSION = 1;
+static const int OMR_PROFILE_SCHEMA_VERSION = 2;
 
 struct CalibrationProfile {
     int calibWidth = 0, calibHeight = 0;
@@ -1069,19 +1106,32 @@ bool runCalibration(const CalibrationRequest& req, string& errorMsg, vector<stri
 
     Mat H; // NEW: Declare H outside the if-block
     vector<Point2f> corners = findCornerSquares(raw);
+    int canvasW = 1000;
+    int canvasH = 1414;
     if (corners.size() == 4) {
+        double w = norm(corners[1] - corners[0]);
+        double h = norm(corners[3] - corners[0]);
+        double ratio = (h > 0) ? (w / h) : 1.414;
+        if (outFiducialRatio) *outFiducialRatio = ratio;
+
+        canvasH = (int)round(canvasW / ratio);
+
         vector<Point2f> dst = {
-            Point2f(0, 0), Point2f(1000, 0),
-            Point2f(1000, 1414), Point2f(0, 1414)
+            Point2f(0, 0), Point2f((float)canvasW, 0),
+            Point2f((float)canvasW, (float)canvasH), Point2f(0, (float)canvasH)
         };
         H = getPerspectiveTransform(corners, dst); // Use the outer H
-        warpPerspective(raw, raw, H, Size(1000, 1414));
-        logLine("Registration: Auto-detected 4 corner squares -> Deskewed to 1000x1414 canvas.");
-        if (outFiducialRatio) {
-            double w = norm(corners[0] - corners[1]);
-            double h = norm(corners[0] - corners[3]);
-            *outFiducialRatio = (h > 0) ? (w / h) : 1.414;
+        
+        // Validate Homography
+        double det = H.at<double>(0,0) * H.at<double>(1,1) - H.at<double>(0,1) * H.at<double>(1,0);
+        if (det < 0.3 || det > 3.0) {
+            errorMsg = "Phase 2 Calibration Failed: Homography has abnormal scale/shear. Check corner detection.";
+            return false;
         }
+
+        warpPerspective(raw, raw, H, Size(canvasW, canvasH));
+        ostringstream ss; ss << "Registration: Auto-detected 4 corner squares -> Deskewed to " << canvasW << "x" << canvasH << " canvas.";
+        logLine(ss.str());
     } else {
         errorMsg = "Phase 2 Calibration Failed: Could not detect the 4 corner squares on the image.";
         return false;
@@ -1633,13 +1683,22 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
     if (corners.size() == 4) {
         matchedBoxes = 4;
         vector<Point2f> dst = {
-            Point2f(0, 0), Point2f(1000, 0),
-            Point2f(1000, 1414), Point2f(0, 1414)
+            Point2f(0, 0), Point2f((float)profile.calibWidth, 0),
+            Point2f((float)profile.calibWidth, (float)profile.calibHeight), Point2f(0, (float)profile.calibHeight)
         };
         Mat H = getPerspectiveTransform(corners, dst);
-        warpPerspective(raw, raw, H, Size(1000, 1414));
+        
+        // Validate Homography
+        double det = H.at<double>(0,0) * H.at<double>(1,1) - H.at<double>(0,1) * H.at<double>(1,0);
+        if (det < 0.3 || det > 3.0) {
+            if (errorOut) *errorOut = "Registration Error: Homography has abnormal scale/shear.";
+            if (errorCodeOut) *errorCodeOut = "REGISTRATION_FAILED";
+            return false;
+        }
+
+        warpPerspective(raw, raw, H, Size(profile.calibWidth, profile.calibHeight));
         deskewed = true;
-        cout << "Registration: Auto-detected 4 corner squares -> Deskewed to 1000x1414 canvas." << endl;
+        cout << "Registration: Auto-detected 4 corner squares -> Deskewed to " << profile.calibWidth << "x" << profile.calibHeight << " canvas." << endl;
     } else {
         cerr << "Registration Error: Could not detect the 4 corner squares." << endl;
         if (errorOut) *errorOut = "Registration Error: Could not detect the 4 corner squares.";
@@ -1650,6 +1709,14 @@ bool runProduction(const string& imagePath, const string& profilePath, const str
     Mat thresh, gray;
     preprocess(raw, thresh, gray);
     Mat output = raw.clone();
+    
+    if (deskewed) {
+        // Draw cyan circles at the 4 warped corners to help visually diagnose registration
+        circle(output, Point(0,0), 20, Scalar(255, 255, 0), 4);
+        circle(output, Point(profile.calibWidth, 0), 20, Scalar(255, 255, 0), 4);
+        circle(output, Point(profile.calibWidth, profile.calibHeight), 20, Scalar(255, 255, 0), 4);
+        circle(output, Point(0, profile.calibHeight), 20, Scalar(255, 255, 0), 4);
+    }
 
     map<string, GridBlockSpec*> blockByName;
     for (auto& b : profile.blocks) blockByName[b.name] = &b;

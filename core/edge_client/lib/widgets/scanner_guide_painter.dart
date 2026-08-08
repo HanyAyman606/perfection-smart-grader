@@ -8,6 +8,12 @@ class ScannerGuidePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // BlendMode.clear only punches a real transparent hole when it operates
+    // on its own offscreen layer — without saveLayer, there's nothing for
+    // it to "clear" against, and the whole overlay was rendering as solid
+    // opaque black instead of revealing the camera preview underneath.
+    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
+
     // Fill the whole screen with dark overlay
     final backgroundPaint = Paint()..color = Colors.black54;
     canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), backgroundPaint);
@@ -21,6 +27,11 @@ class ScannerGuidePainter extends CustomPainter {
 
     // Clear the cutout area to make it fully transparent
     canvas.drawRect(cutoutRect, Paint()..blendMode = BlendMode.clear);
+
+    // Composite the layer (scrim with the real hole) onto the camera below.
+    // Brackets are drawn AFTER this restore, outside the offscreen layer,
+    // so they render normally on top instead of being caught by the clear.
+    canvas.restore();
 
     // Draw the 4 brackets
     final bracketPaint = Paint()

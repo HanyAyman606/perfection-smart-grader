@@ -89,14 +89,15 @@ class WebSocketClient {
   Future<void> _doConnect() async {
     _cleanupConnections();
     _updateStatus(ConnectionStatus.connecting);
-
     try {
       final wsUrl = Uri.parse('ws://$_lastHost:$_lastPort');
       _channel = WebSocketChannel.connect(wsUrl);
-      
-      // Wait for connection to be ready and listen
-      await _channel!.ready;
 
+      // A wrong/unreachable IP on a LAN typically gets no response at all
+      // (dropped SYN) — without an explicit timeout this can hang for the
+      // OS's default TCP connect timeout instead of failing fast with
+      // something the proctor can actually see and act on.
+      await _channel!.ready.timeout(const Duration(seconds: 2));
       _updateStatus(ConnectionStatus.authenticating);
       _subscription = _channel!.stream.listen(
         _onMessage,
@@ -105,13 +106,21 @@ class WebSocketClient {
           _onDisconnected();
         },
       );
-
       // Send Auth Message immediately
       _channel!.sink.add(jsonEncode({
         "type": "auth",
         "name": _lastName,
         "password": _lastPassword,
       }));
+    } on TimeoutException {
+      // Unreachable host — fail fast and visibly instead of silently
+      // retrying forever in the background with no feedback.
+      _intentionalDisconnect = true;
+      _cleanupConnections();
+      _updateStatus(ConnectionStatus.error);
+      _eventController.add(AuthFailure(
+        "Couldn't reach $_lastHost — check the IP address and that both devices are on the same network.",
+      ));
     } catch (e) {
       _onDisconnected();
     }

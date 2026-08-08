@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:path_provider/path_provider.dart';
 import '../providers/exam_session_provider.dart';
 import '../models/exam_models.dart';
 
@@ -69,9 +68,15 @@ class _GradingReviewScreenState extends State<GradingReviewScreen> {
   }
 
   void _viewEngineAnalysis() async {
-    final docDir = await getApplicationDocumentsDirectory();
-    final debugImagePath = '${docDir.path}/latest_scan_debug.png';
+    final session = Provider.of<ExamSessionProvider>(context, listen: false);
+    final debugImagePath = session.currentScan?.debugImagePath;
+    if (debugImagePath == null) return;
+
     final file = File(debugImagePath);
+    // Belt-and-braces: even with a unique-per-scan filename, evict any stale
+    // cache entry for this exact path before showing it (e.g. hot reload,
+    // or a future caller that reuses a path).
+    imageCache.evict(FileImage(file));
 
     if (await file.exists()) {
       if (mounted) {
@@ -84,7 +89,7 @@ class _GradingReviewScreenState extends State<GradingReviewScreen> {
               children: [
                 InteractiveViewer(
                   maxScale: 6.0,
-                  child: Image.file(file, fit: BoxFit.contain, width: double.infinity, height: double.infinity),
+                  child: Image.file(file, gaplessPlayback: false, fit: BoxFit.contain, width: double.infinity, height: double.infinity),
                 ),
                 Positioned(
                   top: 16, right: 16,

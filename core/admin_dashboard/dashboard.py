@@ -11,7 +11,8 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
-    QStackedWidget, QStackedLayout, QMessageBox, QDialog,QPushButton
+    QStackedWidget, QStackedLayout, QMessageBox, QDialog, QPushButton,
+    QApplication, QFileDialog
 )
 from admin_dashboard.screens.new_project_dialog import NewProjectDialog
 from admin_dashboard.screens.session_bank_dialog import SessionBankDialog
@@ -19,21 +20,20 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect, QTimer
 
 from admin_dashboard.theme import (
     Fonts, build_global_stylesheet, SKY_AQUA, TEXT_MUTED, CLOUDY_SKY,
-    RASPBERRY_PLUM, NEON_PINK, INDIGO_BLOOM, BG_PANEL
+    RASPBERRY_PLUM, NEON_PINK, INDIGO_BLOOM, BG_PANEL,ELECTRIC_SAPPHIRE
 )
 from admin_dashboard.project_manager import ProjectManager, CONFIG_FILENAME
 from admin_dashboard.widgets.common import PulsingDot, NavButton, GridBackground, ScanlineOverlay
+from admin_dashboard.widgets.qr_code import generate_qr_pixmap
 from admin_dashboard.screens.login_screen import LoginScreen
 from admin_dashboard.screens.welcome_screen import WelcomeScreen
 from admin_dashboard.pages.setup_page import SetupPage
-from admin_dashboard.pages.templates_page import TemplatesPage
 from admin_dashboard.pages.session_pages import SessionManagerPage
 from admin_dashboard.pages.model_answer_page import ModelAnswerPage
 from admin_dashboard.screens.dialogs import show_error
 from admin_dashboard.network_utils import get_local_ip
 
-NAV_SETUP, NAV_ANSWER_KEY, NAV_TEMPLATES, NAV_SESSION = range(4)
-
+NAV_SETUP, NAV_ANSWER_KEY, NAV_SESSION = range(3)
 class CyberpunkDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -97,7 +97,6 @@ class CyberpunkDashboard(QMainWindow):
     def activate_dashboard(self):
         self.master_stack.setCurrentIndex(2)
         self.page_setup.load_blueprint()
-        self.page_templates.load_saved_template()
         self.set_active_page(NAV_SETUP)
         self.sub_brand.setText(f"// WORKSPACE: {self.project_manager.project_name.upper()}")
 
@@ -108,7 +107,40 @@ class CyberpunkDashboard(QMainWindow):
         self.master_stack.setCurrentIndex(1)
 
     def _refresh_ip_display(self):
-        self.ip_value_lbl.setText(get_local_ip())
+        ip = get_local_ip()
+        self.ip_value_lbl.setText(ip)
+        self.ip_qr_lbl.setPixmap(generate_qr_pixmap(ip, box_size=5, fg=SKY_AQUA))
+
+    def _copy_ip_to_clipboard(self):
+        QApplication.clipboard().setText(self.ip_value_lbl.text())
+        self._flash_ip_feedback("✔ IP COPIED")
+
+    def _copy_qr_to_clipboard(self):
+        pixmap = self.ip_qr_lbl.pixmap()
+        if pixmap is not None:
+            QApplication.clipboard().setPixmap(pixmap)
+            self._flash_ip_feedback("✔ QR COPIED")
+
+    def _save_qr_image(self):
+        pixmap = self.ip_qr_lbl.pixmap()
+        if pixmap is None:
+            return
+        default_name = f"connect_qr_{self.ip_value_lbl.text().replace('.', '-')}.png"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save QR Code", default_name, "PNG Image (*.png)"
+        )
+        if path:
+            pixmap.save(path, "PNG")
+            self._flash_ip_feedback("✔ QR SAVED")
+
+    def _flash_ip_feedback(self, message: str):
+        """Briefly swaps the share-row hint label to a confirmation, then
+        reverts — cheap way to tell the admin the copy/save worked without
+        popping a modal dialog over a sidebar action."""
+        self.ip_share_hint_lbl.setText(message)
+        QTimer.singleShot(1400, lambda: self.ip_share_hint_lbl.setText("TAP TO SHARE"))
+
+
     # ------------------------------------------------------------------
     # DASHBOARD CHROME (topbar / sidebar / content)
     # ------------------------------------------------------------------
@@ -202,10 +234,9 @@ class CyberpunkDashboard(QMainWindow):
 
         btn_setup = NavButton("⚙  Exam Blueprint", CLOUDY_SKY, self.fonts.orbitron)
         btn_answer_key = NavButton("◉  Model Answer Key", INDIGO_BLOOM, self.fonts.orbitron)
-        btn_templates = NavButton("▦  Template Builder", RASPBERRY_PLUM, self.fonts.orbitron)
         btn_live = NavButton("●  Session Manager", NEON_PINK, self.fonts.orbitron)
 
-        self.nav_buttons = [btn_setup,btn_answer_key ,btn_templates, btn_live]
+        self.nav_buttons = [btn_setup, btn_answer_key, btn_live]
 
         for btn in self.nav_buttons:
             sidebar_layout.addWidget(btn)
@@ -232,14 +263,10 @@ class CyberpunkDashboard(QMainWindow):
         ip_layout.setContentsMargins(12, 10, 12, 10)
         ip_layout.setSpacing(2)
 
+        title_row = QHBoxLayout()
         ip_title = QLabel("MOBILE CONNECT IP")
         ip_title.setFont(_font(self.fonts.mono, 8, "Bold"))
         ip_title.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px; background: transparent; border: none;")
-
-        ip_row = QHBoxLayout()
-        self.ip_value_lbl = QLabel(get_local_ip())
-        self.ip_value_lbl.setFont(_font(self.fonts.orbitron, 13, "Black"))
-        self.ip_value_lbl.setStyleSheet(f"color: {SKY_AQUA}; background: transparent; border: none;")
 
         btn_refresh_ip = QPushButton("⟳")
         btn_refresh_ip.setFixedSize(24, 24)
@@ -250,12 +277,65 @@ class CyberpunkDashboard(QMainWindow):
                 """)
         btn_refresh_ip.clicked.connect(self._refresh_ip_display)
 
-        ip_row.addWidget(self.ip_value_lbl)
-        ip_row.addStretch()
-        ip_row.addWidget(btn_refresh_ip)
+        title_row.addWidget(ip_title)
+        title_row.addStretch()
+        title_row.addWidget(btn_refresh_ip)
 
-        ip_layout.addWidget(ip_title)
-        ip_layout.addLayout(ip_row)
+        self.ip_value_lbl = QLabel(get_local_ip())
+        self.ip_value_lbl.setFont(_font(self.fonts.orbitron, 13, "Black"))
+        self.ip_value_lbl.setStyleSheet(f"color: {SKY_AQUA}; background: transparent; border: none;")
+        self.ip_value_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        self.ip_qr_lbl = QLabel()
+        self.ip_qr_lbl.setFixedSize(140, 140)
+        self.ip_qr_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ip_qr_lbl.setStyleSheet("background: #ffffff; border-radius: 6px;")
+        self.ip_qr_lbl.setPixmap(
+            generate_qr_pixmap(self.ip_value_lbl.text(), box_size=5, fg=SKY_AQUA)
+        )
+
+        share_row = QHBoxLayout()
+        share_row.setSpacing(6)
+
+        btn_copy_ip = QPushButton("📋")
+        btn_copy_ip.setToolTip("Copy IP address")
+        btn_qr_copy = QPushButton("🖼")
+        btn_qr_copy.setToolTip("Copy QR code image")
+        btn_qr_save = QPushButton("💾")
+        btn_qr_save.setToolTip("Save QR code as PNG")
+
+        for btn in (btn_copy_ip, btn_qr_copy, btn_qr_save):
+            btn.setFixedSize(28, 28)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: transparent; color: {TEXT_MUTED};
+                            border: 1px solid {TEXT_MUTED}; border-radius: 6px;
+                        }}
+                        QPushButton:hover {{ color: {SKY_AQUA}; border-color: {SKY_AQUA}; }}
+                    """)
+
+        btn_copy_ip.clicked.connect(self._copy_ip_to_clipboard)
+        btn_qr_copy.clicked.connect(self._copy_qr_to_clipboard)
+        btn_qr_save.clicked.connect(self._save_qr_image)
+
+        share_row.addStretch()
+        share_row.addWidget(btn_copy_ip)
+        share_row.addWidget(btn_qr_copy)
+        share_row.addWidget(btn_qr_save)
+        share_row.addStretch()
+
+        self.ip_share_hint_lbl = QLabel("TAP TO SHARE")
+        self.ip_share_hint_lbl.setFont(_font(self.fonts.mono, 7, "Bold"))
+        self.ip_share_hint_lbl.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px; background: transparent; border: none;")
+        self.ip_share_hint_lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        ip_layout.addLayout(title_row)
+        ip_layout.addWidget(self.ip_value_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+        ip_layout.addWidget(self.ip_qr_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
+        ip_layout.addSpacing(6)
+        ip_layout.addLayout(share_row)
+        ip_layout.addWidget(self.ip_share_hint_lbl)
         sidebar_layout.addWidget(self.ip_card)
 
 
@@ -273,7 +353,6 @@ class CyberpunkDashboard(QMainWindow):
 
         btn_setup.clicked.connect(lambda: self.set_active_page(NAV_SETUP))
         btn_answer_key.clicked.connect(lambda: self.set_active_page(NAV_ANSWER_KEY))
-        btn_templates.clicked.connect(lambda: self.set_active_page(NAV_TEMPLATES))
         btn_live.clicked.connect(lambda: self.set_active_page(NAV_SESSION))
 
         return self.sidebar
@@ -305,12 +384,10 @@ class CyberpunkDashboard(QMainWindow):
 
         self.page_setup = SetupPage(self.fonts, self.project_manager)
         self.page_answer_key = ModelAnswerPage(self.fonts, self.project_manager)
-        self.page_templates = TemplatesPage(self.fonts, self.project_manager)
         self.page_session = SessionManagerPage(self.fonts, self.project_manager)
 
         self.content_area.addWidget(self.page_setup)
         self.content_area.addWidget(self.page_answer_key)
-        self.content_area.addWidget(self.page_templates)
         self.content_area.addWidget(self.page_session)
 
         stack_layout.addWidget(self.content_area)

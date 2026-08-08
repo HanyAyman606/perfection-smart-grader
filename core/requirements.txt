@@ -5,3 +5,4 @@ websockets
 pandas
 openpyxl
 sqlite-utils
+qrcode

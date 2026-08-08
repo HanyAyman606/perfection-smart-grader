@@ -59,6 +59,7 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
     _controller = CameraController(backCamera, ResolutionPreset.high, enableAudio: false);
     await _controller!.initialize();
+    await _controller!.lockCaptureOrientation(DeviceOrientation.landscapeLeft);
     if (mounted) setState(() {});
   }
 
@@ -76,16 +77,23 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
     if (_controller == null || !_controller!.value.isInitialized) return;
 
     final photo = await _controller!.takePicture();
+
+    // Fix EXIF orientation NOW, before any anchor gets tapped — otherwise
+    // taps are collected in the raw file's pixel space while bs_calibrate
+    // grades the EXIF-corrected file, causing a systematic offset between
+    // every tapped anchor and the real bubble position.
+    final orientedPath = await CalibrationService.instance.fixExifOrientation(photo.path);
+
     final appDir = await getApplicationDocumentsDirectory();
     final savedPath = '${appDir.path}/omr_calibration_ref.jpg';
-    await File(photo.path).copy(savedPath);
+    await File(orientedPath).copy(savedPath);
 
-    final imageSize = await ImageSize.decodeImageSize(photo.path);
+    final imageSize = await ImageSize.decodeImageSize(orientedPath);
     await _controller!.dispose();
     _controller = null;
 
     setState(() {
-      _capturedPhotoPath = photo.path;
+      _capturedPhotoPath = orientedPath;
       _naturalImageSize = imageSize;
       _phase = _CalibPhase.tapping;
       _taps.clear();
@@ -161,14 +169,14 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
 
       final idBlock = {
         "name": "id",
-        "x1": idTopLeft.dx.toInt(), "y1": idTopLeft.dy.toInt(),
-        "x2": idBottomRight.dx.toInt(), "y2": idBottomRight.dy.toInt(),
+        "x1": idTopLeft.dx.round().toInt(), "y1": idTopLeft.dy.round().toInt(),
+        "x2": idBottomRight.dx.round().toInt(), "y2": idBottomRight.dy.round().toInt(),
       };
 
       final ansBlock = {
         "name": "answers",
-        "x1": ansTopLeft.dx.toInt(), "y1": ansTopLeft.dy.toInt(),
-        "x2": ansBottomRight.dx.toInt(), "y2": ansBottomRight.dy.toInt(),
+        "x1": ansTopLeft.dx.round().toInt(), "y1": ansTopLeft.dy.round().toInt(),
+        "x2": ansBottomRight.dx.round().toInt(), "y2": ansBottomRight.dy.round().toInt(),
       };
 
       final result = await CalibrationService.instance.calibrate(
@@ -183,7 +191,8 @@ class _CalibrationScreenState extends State<CalibrationScreen> {
       );
 
       if (result['success'] == true) {
-        session.markCalibrated(_naturalImageSize!);
+        final ratio = (result['fiducial_ratio'] as num?)?.toDouble() ?? 1.414;
+        session.markCalibrated(_naturalImageSize!, fiducialRatio: ratio);
         if (mounted) {
           Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const ScannerView()));
         }

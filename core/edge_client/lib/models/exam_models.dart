@@ -180,6 +180,7 @@ class GradeResult {
   final double mcqScore;
   final List<Mistake> mistakes;
   final String? imagePath;
+  final String? debugImagePath; // unique per scan — never reuse a shared filename, Flutter's image cache keys on path
   double essayTotal; // MUTABLE — proctor types this in
 
   GradeResult({
@@ -191,6 +192,7 @@ class GradeResult {
     required this.mistakes,
     required this.essayTotal,
     this.imagePath,
+    this.debugImagePath,
   });
 
   double get totalScore => mcqScore + essayTotal;

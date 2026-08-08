@@ -23,8 +23,7 @@ from admin_dashboard.group_registry import group_registry
 
 CONFIG_FILENAME = "nexus_project.json"
 DB_FILENAME = "roster.db"
-TEMPLATE_FILENAME = "cropped_template.jpg"
-SOURCE_TEMPLATE_FILENAME = "source_template.jpg"
+MCQ_LAYOUT_COLS = 3  # bubble sheet studio always spreads MCQs across 3 columns
 
 
 STUDENTS_TABLE_SQL = """
@@ -141,8 +140,7 @@ class ProjectManager:
 
     def save_blueprint(self, mode_id: str, mcq_count: int, mcq_ranges: list[dict],
                        has_essays: bool, essay_points_map: dict,
-                       choices_per_question: int, questions_per_block: int,
-                       id_letter_count: int):
+                       choices_per_question: int, id_letters: str):
         self._update_config(
             project_name=self.project_name,
             mode=mode_id,
@@ -151,33 +149,27 @@ class ProjectManager:
             has_essays=has_essays,
             essay_points_map=essay_points_map,
             choices_per_question=choices_per_question,
-            questions_per_block=questions_per_block,
-            id_letter_count=id_letter_count,
+            id_letters=id_letters,
         )
 
-    def save_template(self, template_path: str, roi_coordinates: dict, source_template_path: str = None):
-        fields = {"template_path": template_path, "roi_coordinates": roi_coordinates}
-        if source_template_path:
-            fields["source_template_path"] = source_template_path
-        self._update_config(**fields)
-
-    def template_save_path(self) -> str:
-        return os.path.join(self.project_dir, TEMPLATE_FILENAME)
-
-    def source_template_save_path(self) -> str:
-        return os.path.join(self.project_dir, SOURCE_TEMPLATE_FILENAME)
-
-    def clear_template(self):
-        """Deletes the saved template images from disk and clears the
-        related config fields — used by the ROI page's 'Clear Image' button."""
-        for path in (self.template_save_path(), self.source_template_save_path()):
-            if os.path.exists(path):
-                os.remove(path)
-        config = self.load_config()
-        for key in ("template_path", "source_template_path", "roi_coordinates"):
-            config.pop(key, None)
-        with open(self.config_path, "w") as f:
-            json.dump(config, f, indent=4)
+    @staticmethod
+    def compute_mcq_column_layout(mcq_count: int, num_cols: int = MCQ_LAYOUT_COLS) -> dict:
+        """Mirrors the Bubble Sheet Studio's column-split math exactly
+        (col1 = ceil(n/3), col2 = ceil(remaining/2), col3 = whatever is
+        left), generalized to any column count: each column takes the
+        ceiling of the questions still remaining divided by the columns
+        still left, so the studio's 3-column formula falls out as the
+        default case. Returns e.g. {"num_cols": 3, "columns": {"1": 9,
+        "2": 8, "3": 8}} for 25 questions."""
+        remaining = max(0, mcq_count)
+        cols_left = max(1, num_cols)
+        columns = {}
+        for i in range(1, num_cols + 1):
+            n = -(-remaining // cols_left)  # ceil division
+            columns[str(i)] = n
+            remaining -= n
+            cols_left -= 1
+        return {"num_cols": num_cols, "columns": columns}
 
     def save_model_answers(self, answers_by_version: dict[str, dict], voided_by_version: dict[str, list]):
         """answers_by_version / voided_by_version are keyed by version label
@@ -233,24 +225,26 @@ class ProjectManager:
         exam_config = self.load_config()
         mode_id = exam_config.get("mode", DEFAULT_MODE_ID)
         exam_mode = get_mode_by_id(mode_id)
+        mcq_count = exam_config.get("mcq_count", 0)
 
         return {
             "exam_name": exam_config.get("project_name", self.project_name),
             "exam_mode": mode_id,
-            "mcq_count": exam_config.get("mcq_count", 0),
+            "mcq_count": mcq_count,
             "mcq_ranges": exam_config.get("mcq_ranges", []),
             "has_essays": exam_config.get("has_essays", False),
             "essay_points_map": exam_config.get("essay_points_map", {}),
-            "template_path": exam_config.get("template_path", ""),
-            "roi_coordinates": exam_config.get("roi_coordinates", {}),
             "group_name": group_name,
             "answer_versions": exam_config.get("answer_versions", [SINGLE_VERSION_KEY]),
             "model_answers": exam_config.get("model_answers", {}),      # {version: {"1": "A", ...}}
             "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}
             "choices_per_question": exam_config.get("choices_per_question", 4),
-            "questions_per_block": exam_config.get("questions_per_block", 10),
-            "id_letter_count": exam_config.get("id_letter_count", 6),
-            "id_digit_columns": exam_mode.id_digit_count,  # derived from mode, not saved
+            "mcq_columns": self.compute_mcq_column_layout(mcq_count),  # {"num_cols": 3, "columns": {"1": n, ...}}
+            "id": {
+                "num_digits": exam_mode.id_digit_count,  # derived from mode, not saved
+                "num_letters": len(exam_config.get("id_letters", "CDEFMW")),
+                "letters": list(exam_config.get("id_letters", "CDEFMW")),
+            },
         }
 
     def get_session_password(self) -> str:
@@ -277,8 +271,8 @@ class ProjectManager:
         if covered < mcq_count:
             problems.append("Mark ranges do not cover every MCQ question yet.")
 
-        if "choices_per_question" not in config or "id_letter_count" not in config:
-            problems.append("Layout parameters (choices per question, ID letter count) have not been saved yet.")
+        if "choices_per_question" not in config or "id_letters" not in config:
+            problems.append("Layout parameters (choices per question, ID letters) have not been saved yet.")
 
         answers_by_version = config.get("model_answers", {})
         voided_by_version = config.get("voided_questions", {})
@@ -295,9 +289,6 @@ class ProjectManager:
             if missing:
                 label = f"Version {version}" if len(versions) > 1 else "Model answer key"
                 problems.append(f"{label}: {len(missing)} question(s) missing an answer.")
-
-        if not config.get("template_path"):
-            problems.append("No ROI template has been saved yet.")
 
         if config.get("has_essays") and not config.get("essay_points_map"):
             problems.append("Essay questions are enabled but have no point values saved.")

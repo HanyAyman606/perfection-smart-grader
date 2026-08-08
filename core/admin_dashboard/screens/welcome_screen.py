@@ -1,10 +1,19 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+import os
 
-from admin_dashboard.theme import CLOUDY_SKY, NEON_PINK, SKY_AQUA, BG_CARD, TEXT_MUTED, TRUE_AZURE
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QFont, QDesktopServices
+
+from admin_dashboard.theme import (
+    CLOUDY_SKY, NEON_PINK, SKY_AQUA, BG_CARD, TEXT_MUTED, TRUE_AZURE, ELECTRIC_SAPPHIRE
+)
 from admin_dashboard.screens.change_password_dialog import ChangePasswordDialog
 from admin_dashboard.recent_projects import recent_projects
+
+STUDIO_HTML_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets", "bubble_sheet_studio.html",
+)
 
 
 class WelcomeScreen(QWidget):
@@ -56,9 +65,23 @@ class WelcomeScreen(QWidget):
         """)
         btn_open.clicked.connect(open_proj_cb)
 
+        btn_studio = QPushButton("🖨 BUBBLE SHEET STUDIO")
+        btn_studio.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
+        btn_studio.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_studio.setFixedSize(300, 100)
+        btn_studio.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {BG_CARD}; color: {ELECTRIC_SAPPHIRE};
+                border: 2px solid {ELECTRIC_SAPPHIRE}; border-radius: 12px;
+            }}
+            QPushButton:hover {{ background-color: {ELECTRIC_SAPPHIRE}; color: #ffffff; }}
+        """)
+        btn_studio.clicked.connect(self.open_bubble_studio)
+
         btn_row.addStretch()
         btn_row.addWidget(btn_new)
         btn_row.addWidget(btn_open)
+        btn_row.addWidget(btn_studio)
         btn_row.addStretch()
 
         btn_change_pw = QPushButton("🔒 CHANGE PASSWORD")
@@ -131,6 +154,14 @@ class WelcomeScreen(QWidget):
 
         self.last_session_card = card
         self.last_session_slot.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+    def open_bubble_studio(self):
+        """Bubble Sheet Studio is a standalone tool that lives outside any
+        workspace — it launches in the system's default browser, same as
+        it used to from inside the dashboard, just reachable from the hub
+        now instead of a sidebar page."""
+        if os.path.exists(STUDIO_HTML_PATH):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(STUDIO_HTML_PATH))
 
     def _open_change_password_dialog(self):
         dialog = ChangePasswordDialog(self.orbitron, self.mono, parent=self)

@@ -12,32 +12,48 @@ picks it up automatically — nothing else in the app hardcodes the letter
 set, so this is the one place a future exam format change happens.
 """
 
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QButtonGroup
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QButtonGroup, QSizePolicy
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import TEXT_MUTED, SKY_AQUA, WARN_COLOR, BG_PANEL, TRUE_AZURE
 
-CHOICE_LETTERS = ["A", "B", "C", "D", "E", "F"]
+CHOICE_LETTERS_MAX = ["A", "B", "C", "D", "E", "F", "G", "H"]
 BUBBLE_SIZE = 38
+BUBBLE_SIZE_COMPACT = 32  # used by the Model Answer page's 3-column layout
+                          # (matches Bubble Sheet Studio) — sized so all 3
+                          # columns fit the page width with no horizontal
+                          # scrolling, while staying close to full size
 
 
 class BubbleRow(QWidget):
-    """Emits `changed` whenever the selected answer or void state changes."""
+    """Emits `changed` whenever the selected answer or void state changes.
+
+    `num_choices` picks how many lettered bubbles this row renders (A..whatever),
+    driven by the Exam Blueprint's "Choices per Q" setting so the answer key
+    always matches the bubble sheet the students actually fill in. Clamped to
+    CHOICE_LETTERS_MAX so a bad config value can't blow up the UI.
+    """
     changed = Signal()
 
-    def __init__(self, question_number: int, orbitron, mono, parent=None):
+    def __init__(self, question_number: int, orbitron, mono, num_choices: int = 4,
+                 compact: bool = False, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.question_number = question_number
         self._voided = False
+        self.bubble_size = BUBBLE_SIZE_COMPACT if compact else BUBBLE_SIZE
+
+        num_choices = max(2, min(num_choices, len(CHOICE_LETTERS_MAX)))
+        self.choice_letters = CHOICE_LETTERS_MAX[:num_choices]
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8 if compact else 10)
 
         self.q_lbl = QLabel(f"Q{question_number}")
-        self.q_lbl.setFixedWidth(50)
-        self.q_lbl.setFont(QFont(mono, 11, QFont.Weight.Bold))
+        self.q_lbl.setFixedWidth(36 if compact else 50)
+        self.q_lbl.setFont(QFont(mono, 10 if compact else 11, QFont.Weight.Bold))
         self.q_lbl.setStyleSheet(f"color: {TEXT_MUTED}; background: transparent; border: none;")
         layout.addWidget(self.q_lbl)
 
@@ -45,12 +61,12 @@ class BubbleRow(QWidget):
         self.button_group.setExclusive(True)
         self.choice_buttons = {}
 
-        for letter in CHOICE_LETTERS:
+        for letter in self.choice_letters:
             btn = QPushButton(letter)
             btn.setCheckable(True)
-            btn.setFixedSize(BUBBLE_SIZE, BUBBLE_SIZE)
+            btn.setFixedSize(self.bubble_size, self.bubble_size)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFont(QFont(orbitron, 11, QFont.Weight.Bold))
+            btn.setFont(QFont(orbitron, 9 if compact else 11, QFont.Weight.Bold))
             btn.setStyleSheet(self._bubble_style())
             btn.clicked.connect(self.changed.emit)
             self.button_group.addButton(btn)
@@ -62,8 +78,8 @@ class BubbleRow(QWidget):
         self.btn_void = QPushButton("🚩 VOID")
         self.btn_void.setCheckable(True)
         self.btn_void.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_void.setFont(QFont(orbitron, 9, QFont.Weight.Bold))
-        self.btn_void.setStyleSheet(self._void_style())
+        self.btn_void.setFont(QFont(orbitron, 8 if compact else 9, QFont.Weight.Bold))
+        self.btn_void.setStyleSheet(self._void_style(compact))
         self.btn_void.toggled.connect(self._on_void_toggled)
         layout.addWidget(self.btn_void)
 
@@ -72,7 +88,7 @@ class BubbleRow(QWidget):
         return f"""
             QPushButton {{
                 background-color: {BG_PANEL}; color: {TRUE_AZURE};
-                border: 2px solid {TRUE_AZURE}; border-radius: {BUBBLE_SIZE // 2}px;
+                border: 2px solid {TRUE_AZURE}; border-radius: {self.bubble_size // 2}px;
             }}
             QPushButton:checked {{
                 background-color: {SKY_AQUA}; color: #ffffff; border: 2px solid {SKY_AQUA};
@@ -83,11 +99,12 @@ class BubbleRow(QWidget):
             }}
         """
 
-    def _void_style(self) -> str:
+    def _void_style(self, compact: bool = False) -> str:
+        padding = "4px 8px" if compact else "8px 12px"
         return f"""
             QPushButton {{
                 background-color: transparent; color: {WARN_COLOR};
-                border: 2px solid {WARN_COLOR}; border-radius: 8px; padding: 8px 12px;
+                border: 2px solid {WARN_COLOR}; border-radius: 8px; padding: {padding};
             }}
             QPushButton:checked {{ background-color: {WARN_COLOR}; color: #ffffff; }}
             QPushButton:hover {{ background-color: {WARN_COLOR}; color: #ffffff; }}

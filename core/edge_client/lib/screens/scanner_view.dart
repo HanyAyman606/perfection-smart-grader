@@ -48,6 +48,7 @@ class _ScannerViewState extends State<ScannerView> {
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
     await _controller!.initialize();
+    await _controller!.lockCaptureOrientation(DeviceOrientation.landscapeLeft);
     if (mounted) {
       setState(() {});
       _controller!.startImageStream(_processCameraFrame);

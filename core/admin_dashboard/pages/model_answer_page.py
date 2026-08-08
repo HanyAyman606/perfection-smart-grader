@@ -76,12 +76,17 @@ class ModelAnswerPage(QWidget):
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("border: none; background: transparent;")
         self.rows_container = QWidget()
         self.rows_container.setStyleSheet("background: transparent;")
         self.rows_layout = QGridLayout(self.rows_container)
-        self.rows_layout.setSpacing(10)
+        self.rows_layout.setVerticalSpacing(10)
+        self.rows_layout.setHorizontalSpacing(20)
         self.rows_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.rows_layout.setColumnStretch(0, 1)
+        self.rows_layout.setColumnStretch(1, 1)
+        self.rows_layout.setColumnStretch(2, 1)
         self.scroll.setWidget(self.rows_container)
         content_layout.addWidget(self.scroll)
 
@@ -118,18 +123,31 @@ class ModelAnswerPage(QWidget):
 
         config = self.project_manager.load_config()
         mcq_count = config.get("mcq_count", 0)
+        num_choices = config.get("choices_per_question", 4)  # NEW
         mode = get_mode_by_id(config.get("mode", DEFAULT_MODE_ID))
         self.supports_versions = mode.has_answer_versions
 
-        half = (mcq_count + 1) // 2  # left column gets the extra one when odd
+        # Same column split as the Bubble Sheet Studio (col1 = ceil(n/3),
+        # then the remainder split the same way) so the answer key layout
+        # visually matches the printed sheet the graders are holding.
+        layout_cols = self.project_manager.compute_mcq_column_layout(mcq_count)
+        col_sizes = [layout_cols["columns"][str(c)] for c in range(1, layout_cols["num_cols"] + 1)]
+
+        col_bounds = []
+        start = 1
+        for size in col_sizes:
+            col_bounds.append((start, start + size - 1))
+            start += size
+
         for i in range(1, mcq_count + 1):
-            row = BubbleRow(i, self.fonts.orbitron, self.fonts.mono)
+            row = BubbleRow(i, self.fonts.orbitron, self.fonts.mono,
+                            num_choices=num_choices, compact=True)
             row.changed.connect(self._refresh_status)
             self.rows.append(row)
-            if i <= half:
-                grid_row, grid_col = i - 1, 0
-            else:
-                grid_row, grid_col = i - 1 - half, 1
+            for grid_col, (col_start, col_end) in enumerate(col_bounds):
+                if col_start <= i <= col_end:
+                    grid_row = i - col_start
+                    break
             self.rows_layout.addWidget(row, grid_row, grid_col)
 
         saved_answers = config.get("model_answers", {})

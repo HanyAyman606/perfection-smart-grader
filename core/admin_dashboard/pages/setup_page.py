@@ -8,8 +8,10 @@ workspace via ProjectManager.
 
 from PySide6.QtWidgets import (
     QLabel, QGridLayout, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QScrollArea, QWidget, QPushButton, QMessageBox
+    QScrollArea, QWidget, QPushButton, QMessageBox, QLineEdit
 )
+from PySide6.QtGui import QRegularExpressionValidator
+from PySide6.QtCore import QRegularExpression
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
@@ -21,6 +23,8 @@ from admin_dashboard.screens.dialogs import show_warning, show_info
 
 
 class SetupPage(QWidget):
+    DEFAULT_LETTERS = "CDEFMW"
+
     def __init__(self, fonts, project_manager):
         super().__init__()
         self.fonts = fonts
@@ -57,16 +61,19 @@ class SetupPage(QWidget):
         self.choices_per_question_spin.setRange(2, 8)
         self.choices_per_question_spin.setValue(4)
         self.choices_per_question_spin.setStyleSheet(INPUT_STYLE)
-
-        self.questions_per_block_spin = QSpinBox()
-        self.questions_per_block_spin.setRange(1, 50)
-        self.questions_per_block_spin.setValue(10)
-        self.questions_per_block_spin.setStyleSheet(INPUT_STYLE)
+        self.choices_per_question_spin.setEnabled(False)  # locked to 4 — matches Bubble Sheet Studio
 
         self.id_letter_count_spin = QSpinBox()
         self.id_letter_count_spin.setRange(1, 12)
         self.id_letter_count_spin.setValue(6)
         self.id_letter_count_spin.setStyleSheet(INPUT_STYLE)
+        self.id_letter_count_spin.valueChanged.connect(self._on_id_letter_count_changed)
+
+        self.id_letters_edit = QLineEdit(self.DEFAULT_LETTERS)
+        self.id_letters_edit.setValidator(
+            QRegularExpressionValidator(QRegularExpression("[A-Za-z]*"))
+        )
+        self.id_letters_edit.setStyleSheet(INPUT_STYLE)
 
         top_grid.addWidget(self._make_label("EXAM MODE:"), 0, 0)
         top_grid.addWidget(self.exam_mode_combo, 0, 1)
@@ -74,10 +81,10 @@ class SetupPage(QWidget):
         top_grid.addWidget(self.mcq_count_spin, 0, 3)
         top_grid.addWidget(self._make_label("CHOICES PER Q:"), 1, 0)
         top_grid.addWidget(self.choices_per_question_spin, 1, 1)
-        top_grid.addWidget(self._make_label("Q'S PER BLOCK:"), 1, 2)
-        top_grid.addWidget(self.questions_per_block_spin, 1, 3)
-        top_grid.addWidget(self._make_label("ID LETTER COLS:"), 1, 4)
-        top_grid.addWidget(self.id_letter_count_spin, 1, 5)
+        top_grid.addWidget(self._make_label("ID LETTER COUNT:"), 1, 2)
+        top_grid.addWidget(self.id_letter_count_spin, 1, 3)
+        top_grid.addWidget(self._make_label("ID LETTERS:"), 2, 0)
+        top_grid.addWidget(self.id_letters_edit, 2, 1, 1, 3)
         content_layout.addLayout(top_grid)
 
         # -- MCQ mark ranges ------------------------------------------
@@ -164,6 +171,30 @@ class SetupPage(QWidget):
         content_layout.addWidget(btn_save_blueprint)
 
 
+    @staticmethod
+    def _default_letters(count: int) -> str:
+        """A-B-C... default letter sequence for a freshly-set count."""
+        return "".join(chr(ord('A') + (i % 26)) for i in range(count))
+
+    def _on_id_letter_count_changed(self, value: int):
+        """Grows/shrinks the letters string to match the new count instead
+        of regenerating it, so any manual edits the user made are kept —
+        going from 6 to 7 appends one letter, 6 to 5 drops the last one."""
+        current = self.id_letters_edit.text()
+        diff = value - len(current)
+        if diff > 0:
+            start_code = ord(current[-1]) + 1 if current else ord('A')
+            addition = ""
+            code = start_code
+            for _ in range(diff):
+                if code > ord('Z'):
+                    code = ord('A')
+                addition += chr(code)
+                code += 1
+            self.id_letters_edit.setText(current + addition)
+        elif diff < 0:
+            self.id_letters_edit.setText(current[:value])
+
     def _make_label(self, text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
@@ -226,6 +257,16 @@ class SetupPage(QWidget):
             )
             return
 
+        id_letters = self.id_letters_edit.text().strip().upper()
+        id_letter_count = self.id_letter_count_spin.value()
+        if len(id_letters) != id_letter_count:
+            show_warning(
+                self, self.fonts.orbitron, self.fonts.mono, "ID Letters Mismatch",
+                f"ID Letter Count is set to {id_letter_count}, but the ID Letters "
+                f"field has {len(id_letters)} character(s). Make them match before saving."
+            )
+            return
+
         has_essays = self.essay_checkbox.isChecked()
         essay_data = {}
         if has_essays:
@@ -241,8 +282,7 @@ class SetupPage(QWidget):
             has_essays=has_essays,
             essay_points_map=essay_data,
             choices_per_question=self.choices_per_question_spin.value(),
-            questions_per_block=self.questions_per_block_spin.value(),
-            id_letter_count=self.id_letter_count_spin.value(),
+            id_letters=id_letters,
         )
 
         show_info(
@@ -275,8 +315,12 @@ class SetupPage(QWidget):
             self.range_builder.set_total_questions(mcq_count)
 
         self.choices_per_question_spin.setValue(config.get("choices_per_question", 4))
-        self.questions_per_block_spin.setValue(config.get("questions_per_block", 10))
-        self.id_letter_count_spin.setValue(config.get("id_letter_count", 6))
+
+        id_letters = config.get("id_letters", self.DEFAULT_LETTERS)
+        self.id_letters_edit.setText(id_letters)
+        self.id_letter_count_spin.blockSignals(True)
+        self.id_letter_count_spin.setValue(len(id_letters) or 1)
+        self.id_letter_count_spin.blockSignals(False)
 
         has_essays = config.get("has_essays", False)
         essay_map = config.get("essay_points_map", {})

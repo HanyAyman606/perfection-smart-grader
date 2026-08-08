@@ -44,20 +44,22 @@ class OmrService {
     final appDir = await getApplicationSupportDirectory();
     final profilePath = '${appDir.path}/active_profile.yml';
     final docDir = await getApplicationDocumentsDirectory();
-    final debugImagePath = '${docDir.path}/latest_scan_debug.png';
+    final scanStamp = DateTime.now().microsecondsSinceEpoch;
+    final debugImagePath = '${docDir.path}/scan_debug_$scanStamp.png';
 
     final resultJsonStr = NativeOmrBindings.instance.callRun(orientedImagePath, profilePath, debugImagePath);
     final rawResult = jsonDecode(resultJsonStr) as Map<String, dynamic>;
 
-    return buildGradeResult(rawResult, masterPacket, selectedVersion, orientedImagePath);
+    return buildGradeResult(rawResult, masterPacket, selectedVersion, orientedImagePath, debugImagePath);
   }
 
   GradeResult buildGradeResult(
     Map<String, dynamic> raw,
     MasterPacket masterPacket,
     String selectedVersion,
-    String? imagePath,
-  ) {
+    String? imagePath, [
+    String? debugImagePath,
+  ]) {
     if (raw['success'] != true) {
       throw OmrEngineException(
         raw['error_code'] as String? ?? '',
@@ -125,6 +127,7 @@ class OmrService {
       mistakes: mistakes,
       essayTotal: 0.0,
       imagePath: imagePath,
+      debugImagePath: debugImagePath,
     );
   }
 }

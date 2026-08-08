@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bubble Sheet Studio</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  :root{
+    --panel-bg:#f7f5fb; --ui-bg:#1f1b2e; --ui-panel:#2a2440; --ui-border:#3d3560;
+    --ui-text:#f0eefc; --ui-muted:#a79fd1; --accent:#4a2a7a; --ok:#5fd08a; --warn:#e8837a;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Segoe UI',Arial,sans-serif;background:var(--ui-bg);color:var(--ui-text);height:100vh;overflow:hidden;display:flex;flex-direction:column;}
+  #tabs{display:flex;background:var(--ui-panel);border-bottom:1px solid var(--ui-border);}
+  .tab-btn{padding:14px 22px;background:none;border:none;color:var(--ui-muted);font-size:13px;font-weight:700;letter-spacing:.03em;cursor:pointer;border-bottom:2px solid transparent;}
+  .tab-btn.active{color:#fff;border-bottom-color:var(--accent);}
+  #main{flex:1;display:flex;overflow:hidden;}
+  .tabpage{flex:1;display:none;overflow:hidden;}
+  .tabpage.active{display:flex;}
+  #sidebar{width:320px;min-width:320px;background:var(--ui-panel);border-right:1px solid var(--ui-border);padding:16px;overflow-y:auto;}
+  #sidebar h1{font-size:15px;margin:0 0 3px;color:#fff;}
+  .sub{font-size:11px;color:var(--ui-muted);margin-bottom:14px;}
+  .field{margin-bottom:12px;}
+  .field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ui-muted);margin-bottom:4px;}
+  .field input[type=text],.field input[type=number],.field textarea{width:100%;padding:7px 9px;background:#171326;border:1px solid var(--ui-border);color:var(--ui-text);border-radius:6px;font-size:13px;font-family:inherit;}
+  .field textarea{resize:vertical;min-height:44px;}
+  .field input[type=color]{width:100%;height:30px;border:none;background:none;padding:0;border-radius:6px;cursor:pointer;}
+  .row2{display:flex;gap:8px;}
+  .row2 .field{flex:1;}
+  .section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);margin:16px 0 8px;border-bottom:1px solid var(--ui-border);padding-bottom:5px;}
+  .btn{width:100%;padding:9px;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer;margin-bottom:7px;}
+  .btn:active{transform:scale(.98);}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-secondary{background:#171326;color:var(--ui-text);border:1px solid var(--ui-border);}
+  .btn-ok{background:#1e3a2a;color:var(--ok);border:1px solid #2f5a3f;}
+  .hint-box{font-size:11.5px;color:var(--ui-muted);background:#171326;border:1px solid var(--ui-border);border-radius:7px;padding:9px 10px;line-height:1.5;margin-bottom:10px;}
+  #canvas-wrap{flex:1;display:flex;align-items:flex-start;justify-content:center;background:#0f0d1a;position:relative;overflow:auto;padding:30px;}
+  svg{background:#fff;box-shadow:0 20px 60px rgba(0,0,0,.5);cursor:default;}
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--ui-border);border-radius:4px;}
+
+  /* --- Apply-to-PDF tab --- */
+  #applyPage{flex-direction:column;overflow-y:auto;padding:20px 26px;gap:18px;}
+  .step-card{background:var(--ui-panel);border:1px solid var(--ui-border);border-radius:10px;padding:16px 18px;max-width:1100px;margin:0 auto 18px;width:100%;}
+  .step-card h2{font-size:14px;margin:0 0 4px;color:#fff;}
+  .step-card .sub{margin-bottom:12px;}
+  .pdf-preview-wrap{position:relative;display:inline-block;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.4);}
+  .pdf-preview-wrap canvas{display:block;max-width:100%;}
+  
+  .canva-box{position:absolute;border:2px solid #8b6ee8;cursor:move;overflow:hidden;background:#fff;}
+  .canva-box img{width:100%;height:100%;display:block;pointer-events:none;}
+  .canva-box .rlabel{position:absolute;top:-22px;left:0;font-size:10px;font-weight:700;background:#171326;color:#8b6ee8;padding:2px 6px;border-radius:4px;white-space:nowrap;z-index:10;}
+  
+  .handle{position:absolute;width:10px;height:10px;background:#fff;border:2px solid #8b6ee8;border-radius:2px;z-index:11;}
+  .handle.tl{top:-5px;left:-5px;cursor:nwse-resize;}
+  .handle.tr{top:-5px;right:-5px;cursor:nesw-resize;}
+  .handle.bl{bottom:-5px;left:-5px;cursor:nesw-resize;}
+  .handle.br{bottom:-5px;right:-5px;cursor:nwse-resize;}
+  .handle.tm{top:-5px;left:calc(50% - 5px);cursor:ns-resize;}
+  .handle.bm{bottom:-5px;left:calc(50% - 5px);cursor:ns-resize;}
+  .handle.ml{top:calc(50% - 5px);left:-5px;cursor:ew-resize;}
+  .handle.mr{top:calc(50% - 5px);right:-5px;cursor:ew-resize;}
+
+  .preview-col{flex:1;min-width:320px;}
+  .preview-col h3{font-size:12px;color:var(--ui-muted);margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em;}
+  .inline-controls{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap;}
+  .inline-controls label{font-size:11.5px;color:var(--ui-muted);}
+  .inline-controls input[type=number]{width:70px;padding:5px 7px;background:#171326;border:1px solid var(--ui-border);color:var(--ui-text);border-radius:5px;}
+  .file-drop{border:2px dashed var(--ui-border);border-radius:10px;padding:26px;text-align:center;color:var(--ui-muted);font-size:13px;cursor:pointer;}
+  .file-drop:hover{border-color:var(--accent);color:var(--ui-text);}
+  .export-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;}
+  .export-row .btn{width:auto;flex:1;min-width:160px;}
+  #applyStatus{font-size:12px;color:var(--ui-muted);margin-top:8px;min-height:16px;}
+</style>
+</head>
+<body>
+
+<div id="tabs">
+  <button class="tab-btn active" data-tab="design">1 &nbsp;Design Bubble Card</button>
+  <button class="tab-btn" data-tab="apply">2 &nbsp;Apply to Old Quiz PDF</button>
+</div>
+
+<div id="main">
+  <!-- TAB 1: DESIGN -->
+  <div class="tabpage active" id="designPage">
+    <div id="sidebar">
+      <h1>Bubble Sheet Card</h1>
+      <div class="sub">Optimized for 14–25 question quizzes with perfectly spaced bubbles.</div>
+
+      <div class="section-title">Card Settings</div>
+      <div class="row2">
+        <div class="field"><label>Total questions</label><input type="number" id="numQuestions" value="25" min="1" max="150"></div>
+        <div class="field"><label>Choices per Q</label><input type="number" id="numChoices" value="4" min="2" max="6"></div>
+      </div>
+      <div class="field"><label>ID letter options</label><input type="text" id="idLetters" value="CDEFMW"></div>
+      <div class="field"><label>ID digit columns</label><input type="number" id="digitCols" value="3" min="0" max="6"></div>
+      
+      <div class="section-title">Visuals & Formatting</div>
+      <div class="field"><label>Accent color</label><input type="color" id="accentColor" value="#4a2a7a"></div>
+
+      <div class="section-title">Export Card</div>
+      <button class="btn btn-primary" id="exportPng">Download PNG</button>
+      <button class="btn btn-secondary" id="exportSvg">Download SVG</button>
+    </div>
+    <div id="canvas-wrap">
+      <svg id="sheet" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+  </div>
+
+  <!-- TAB 2: APPLY TO PDF -->
+  <div class="tabpage" id="applyPage">
+    <div class="step-card">
+      <h2>Step A — Upload the old quiz PDF</h2>
+      <div class="file-drop" id="fileDrop">Click to choose a PDF, or drag one here</div>
+      <input type="file" id="pdfFile" accept="application/pdf" style="display:none;">
+      <div id="applyStatus"></div>
+    </div>
+
+    <div class="step-card" id="pageStep" style="display:none;">
+      <h2>Step B — Canva-Style Live Template Box</h2>
+      <div class="sub">The actual template workspace is rendered live inside the box. Drag corners or edges to scale and fit it precisely over the old quiz grid.</div>
+      <div class="inline-controls">
+        <label>Bubble-sheet page</label><input type="number" id="bubblePageNum" value="1" min="1">
+        <button class="btn btn-secondary btn-sm" id="loadPagesBtn" style="width:auto;padding:7px 14px;">Render Page</button>
+      </div>
+      <div class="preview-col">
+        <h3>PDF Preview — Live Template Workspace</h3>
+        <div class="pdf-preview-wrap" id="bubbleWrap"></div>
+      </div>
+    </div>
+
+    <div class="step-card" id="applyStep" style="display:none;">
+      <h2>Step C — Apply & Export</h2>
+      <button class="btn btn-primary" id="applyBtn" style="max-width:320px;">Apply changes & Build PDF</button>
+      <div id="resultWrap" style="margin-top:14px;"></div>
+      <div class="export-row" id="exportRow" style="display:none;">
+        <button class="btn btn-ok" id="downloadPdfBtn">Download Full Edited PDF</button>
+        <button class="btn btn-secondary" id="downloadPngBtn">Download Bubble Page as PNG</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js";
+
+document.querySelectorAll('.tab-btn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('.tab-btn').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tabpage').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById(b.dataset.tab+'Page').classList.add('active');
+  });
+});
+
+let card = {
+  numQuestions: 25, numChoices: 4, idLetters: 'CDEFMW', digitCols: 3,
+  accent: '#4a2a7a', bubbleR: 14, rowGap: 44
+};
+
+function val(id){ return document.getElementById(id).value; }
+function esc(str){ return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function letterOf(n){ return String.fromCharCode(65+n); }
+
+function pullConfigFromInputs(){
+  card.numQuestions = Math.max(1, parseFloat(val('numQuestions'))||25);
+  card.numChoices = Math.max(2, parseFloat(val('numChoices'))||4);
+  card.idLetters = val('idLetters').replace(/[^A-Za-z0-9]/g,'');
+  card.digitCols = Math.max(0, parseFloat(val('digitCols'))||0);
+  card.accent = val('accentColor');
+}
+
+function buildCardSVG(){
+  const accent = card.accent;
+  const numQuestions = card.numQuestions, numChoices = card.numChoices;
+  const idLetters = card.idLetters.split('');
+  const digitCols = card.digitCols, r = card.bubbleR, rowGap = card.rowGap;
+  
+  const canvasW = 1180; 
+  const idPanelW = 340;
+  const mcqPanelW = 710; 
+  const panelY = 95; // Increased from 70 to give space below the anchor box
+
+  // ID Panel Height Calculation
+  const idMaxRows = Math.max(idLetters.length, 10);
+  const boxY = 36; // Moved up to allocate more square space
+  const boxSize = 50; // Expanded sizes
+  const colHeaderY = boxY + boxSize + 15;
+  const rowStartY = colHeaderY + 22;
+  const lastIdRowY = rowStartY + (idMaxRows - 1) * rowGap;
+  const idReqH = lastIdRowY + r + 30;
+
+  // MCQ Panel Dynamic Height Calculation
+  const col1 = Math.ceil(numQuestions / 3);
+  const col2 = Math.ceil((numQuestions - col1) / 2);
+  const col3 = numQuestions - col1 - col2;
+  const cols = [col1, col2, col3];
+
+  const actualMaxRows = Math.max(col1, col2, col3, 1);
+  const maxRowsForHeight = Math.max(actualMaxRows, 10); // Floor fixed to prevent panel height collapse
+
+  const rightHeaderH = 85;
+  const lastMcqRowYForHeight = rightHeaderH + (maxRowsForHeight - 1) * rowGap;
+  const mcqReqH = lastMcqRowYForHeight + r + 30;
+
+  const panelH = Math.max(idReqH, mcqReqH);
+  const canvasH = panelY + panelH + 50;
+
+  // Custom Dynamic Row Gap Logic
+  let dynamicRowGap = rowGap;
+  if (actualMaxRows < 10) {
+     const defaultSpan = (10 - 1) * rowGap;
+     dynamicRowGap = defaultSpan / actualMaxRows; // Dynamically expands gaps specifically for low question counts
+  }
+
+  let s = [];
+  s.push(`<rect x="0" y="0" width="${canvasW}" height="${canvasH}" fill="#ffffff"/>`);
+
+  // --- OUTER FRAME & CORNER TARGET BOXES ---
+  s.push(`<rect x="15" y="15" width="${canvasW - 30}" height="${canvasH - 30}" fill="none" stroke="${accent}" stroke-width="7"/>`);
+
+  // Solid Anchor Box
+  s.push(`<rect x="15" y="15" width="60" height="60" fill="${accent}"/>`);
+
+  // --- LEFT PANEL (STUDENT ID) ---
+  const idX = 40;
+  s.push(`<g transform="translate(${idX},${panelY})">`);
+  s.push(`<rect x="0" y="0" width="${idPanelW}" height="${panelH}" rx="4" fill="#fff" stroke="${accent}" stroke-width="4.5"/>`);
+  s.push(`<text x="${idPanelW/2}" y="25" font-size="15" font-weight="bold" fill="${accent}" text-anchor="middle">STUDENT ID PANEL</text>`);
+
+  const nBoxes = 1 + digitCols;
+  const totalBoxW = (nBoxes * boxSize) + ((nBoxes - 1) * 16);
+  const boxStartX = (idPanelW - totalBoxW) / 2;
+
+  for(let i=0; i<nBoxes; i++){
+    const bx = boxStartX + i*(boxSize+16);
+    s.push(`<rect x="${bx.toFixed(1)}" y="${boxY}" width="${boxSize}" height="${boxSize}" rx="3" fill="none" stroke="${accent}" stroke-width="2.2"/>`);
+  }
+
+  const colLabels = ['LETTER']; for(let i=1; i<=digitCols; i++) colLabels.push('DIGIT '+i);
+  const colValues = [idLetters]; for(let i=0; i<digitCols; i++) colValues.push('0123456789'.split(''));
+  const colCenters = []; for(let i=0; i<nBoxes; i++) colCenters.push(boxStartX + i*(boxSize+16) + boxSize/2);
+
+  colCenters.forEach((cx,i)=>{
+    s.push(`<text x="${cx.toFixed(1)}" y="${colHeaderY}" font-size="10" font-weight="bold" fill="${accent}" text-anchor="middle">${esc(colLabels[i])}</text>`);
+  });
+
+  colCenters.forEach((cx,ci)=>{
+    const vals = colValues[ci]; const n = vals.length;
+    vals.forEach((v,ri)=>{
+      const ry = n===1 ? rowStartY : rowStartY + ri*(lastIdRowY - rowStartY)/(n-1);
+      s.push(`<circle cx="${cx.toFixed(1)}" cy="${ry.toFixed(2)}" r="${r}" fill="none" stroke="${accent}" stroke-width="4.5"/>`);
+      s.push(`<text x="${cx.toFixed(1)}" y="${(ry+r*0.38).toFixed(2)}" font-size="${(r*0.9).toFixed(1)}" fill="${accent}" text-anchor="middle">${esc(String(v))}</text>`);
+    });
+  });
+
+  for (let i = 0; i < nBoxes - 1; i++) {
+    const lineX = colCenters[i] + (boxSize / 2) + 8;
+    // THINNED ID PANEL DIVIDERS
+    s.push(`<line x1="${lineX.toFixed(1)}" y1="${colHeaderY - 10}" x2="${lineX.toFixed(1)}" y2="${panelH - 12}" stroke="${accent}" stroke-width="1.0" opacity="0.4"/>`);
+  }
+  s.push(`</g>`);
+
+  // --- RIGHT PANEL (MULTIPLE CHOICE) ---
+  const mcqX = 410;
+  s.push(`<g transform="translate(${mcqX},${panelY})">`);
+  s.push(`<rect x="0" y="0" width="${mcqPanelW}" height="${panelH}" rx="4" fill="#fff" stroke="${accent}" stroke-width="4.5"/>`);
+  s.push(`<text x="${mcqPanelW/2}" y="25" font-size="15" font-weight="bold" fill="${accent}" text-anchor="middle">MULTIPLE CHOICE ANSWER PANEL</text>`);
+
+  s.push(`<line x1="10" y1="36" x2="${mcqPanelW - 10}" y2="36" stroke="${accent}" stroke-width="2.5"/>`);
+
+  const groupGapX = 18;
+  const qColW = (mcqPanelW - 20 - (2 * groupGapX)) / 3;
+  const bubbleGap = r * 2.8;
+
+  let currentQ = 1;
+  for(let g=0; g<3; g++){
+    const gx = 10 + g*(qColW + groupGapX);
+    const numInCol = cols[g];
+
+    if (g > 0) {
+       // THINNED MCQ VERTICAL COLUMN DIVIDERS
+       s.push(`<line x1="${(gx - groupGapX/2).toFixed(1)}" y1="36" x2="${(gx - groupGapX/2).toFixed(1)}" y2="${panelH - 12}" stroke="${accent}" stroke-width="1.2" opacity="0.6"/>`);
+    }
+
+    if (numInCol > 0) {
+       const endQ = currentQ + numInCol - 1;
+       s.push(`<text x="${(gx + qColW/2).toFixed(1)}" y="58" font-size="11" font-weight="bold" fill="${accent}" text-anchor="middle">QUESTIONS ${currentQ}-${endQ}</text>`);
+    }
+
+    const numX = gx + 12;
+    const bubbleStartX = numX + 56;
+
+    for(let row=0; row<numInCol; row++){
+      const ry = rightHeaderH + row * dynamicRowGap;
+
+      s.push(`<text x="${numX.toFixed(1)}" y="${(ry+4).toFixed(1)}" font-size="13" font-weight="bold" fill="${accent}">Q${currentQ}.</text>`);
+
+      for(let c=0; c<numChoices; c++){
+        const cx = bubbleStartX + c * bubbleGap;
+        s.push(`<circle cx="${cx.toFixed(1)}" cy="${ry.toFixed(1)}" r="${r}" fill="none" stroke="${accent}" stroke-width="4.5"/>`);
+        s.push(`<text x="${cx.toFixed(1)}" y="${(ry+r*0.38).toFixed(2)}" font-size="${(r*0.9).toFixed(1)}" fill="${accent}" text-anchor="middle">${letterOf(c)}</text>`);
+      }
+      currentQ++;
+    }
+  }
+
+  for(let g=0; g<3; g++){
+      const numInCol = cols[g];
+      const gx = 10 + g*(qColW + groupGapX);
+      for(let row=0; row < numInCol - 1; row++){
+          const lineY = rightHeaderH + row * dynamicRowGap + (dynamicRowGap / 2);
+          const lineXStart = gx;
+          const lineXEnd = gx + qColW;
+          // THINNED MCQ HORIZONTAL ROW DIVIDERS
+          s.push(`<line x1="${lineXStart.toFixed(1)}" y1="${lineY.toFixed(1)}" x2="${lineXEnd.toFixed(1)}" y2="${lineY.toFixed(1)}" stroke="${accent}" stroke-width="1.0" opacity="0.3"/>`);
+      }
+  }
+
+  s.push(`</g>`);
+  return {svg: s.join(''), w: canvasW, h: canvasH};
+}
+
+function renderCard(){
+  pullConfigFromInputs();
+  const {svg,w,h} = buildCardSVG();
+  const el = document.getElementById('sheet');
+  el.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  el.setAttribute('width', w);
+  el.setAttribute('height', h);
+  el.innerHTML = svg;
+}
+
+document.querySelectorAll('#sidebar .field input').forEach(el=>{
+  el.addEventListener('input', renderCard);
+});
+
+function serializeCardSVG(){
+  const {svg,w,h} = buildCardSVG();
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">${svg}</svg>`;
+}
+
+function rasterizeCard(targetWidthPx){
+  return new Promise((resolve,reject)=>{
+    const {w,h} = buildCardSVG();
+    const scaleFactor = targetWidthPx/w;
+    const outW = Math.round(w*scaleFactor), outH = Math.round(h*scaleFactor);
+    const svgStr = serializeCardSVG();
+    const blob = new Blob([svgStr], {type:'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = ()=>{
+      const canvas = document.createElement('canvas');
+      canvas.width = outW; canvas.height = outH;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,outW,outH);
+      ctx.drawImage(img,0,0,outW,outH);
+      URL.revokeObjectURL(url);
+      resolve({canvas, dataUrl: canvas.toDataURL('image/png'), w:outW, h:outH});
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+document.getElementById('exportSvg').addEventListener('click',()=>{
+  const svgStr = serializeCardSVG();
+  const blob = new Blob([svgStr], {type:'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='bubble_card.svg'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('exportPng').addEventListener('click', async ()=>{
+  const {w} = buildCardSVG();
+  const res = await rasterizeCard(w*2);
+  res.canvas.toBlob(blob=>{
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='bubble_card.png'; a.click();
+  });
+});
+
+/* ============================================================
+   TAB 2: APPLY TO PDF
+============================================================ */
+let uploadedPdfBytes = null;
+let pdfDocProxy = null;
+let canvaRect = {x: 30, y: 450, w: 700, h: 320}; 
+let editedPdfBytes = null;
+
+const fileDrop = document.getElementById('fileDrop');
+const pdfFileInput = document.getElementById('pdfFile');
+fileDrop.addEventListener('click',()=>pdfFileInput.click());
+fileDrop.addEventListener('dragover',e=>{e.preventDefault();});
+fileDrop.addEventListener('drop',e=>{
+  e.preventDefault();
+  if(e.dataTransfer.files.length) handlePdfFile(e.dataTransfer.files[0]);
+});
+pdfFileInput.addEventListener('change',e=>{ if(e.target.files.length) handlePdfFile(e.target.files[0]); });
+
+async function handlePdfFile(file){
+  const status = document.getElementById('applyStatus');
+  status.textContent = 'Loading PDF...';
+  const buf = await file.arrayBuffer();
+  uploadedPdfBytes = new Uint8Array(buf);
+  pdfDocProxy = await pdfjsLib.getDocument({data: uploadedPdfBytes.slice()}).promise;
+  document.getElementById('bubblePageNum').max = pdfDocProxy.numPages;
+  document.getElementById('bubblePageNum').value = pdfDocProxy.numPages;
+  status.textContent = `Loaded "${file.name}" — ${pdfDocProxy.numPages} page(s). Defaulted to last page.`;
+  document.getElementById('pageStep').style.display='block';
+  document.getElementById('applyStep').style.display='block';
+  document.getElementById('exportRow').style.display='none';
+  await loadPreviewPage();
+}
+
+document.getElementById('loadPagesBtn').addEventListener('click', loadPreviewPage);
+
+async function renderPageToWrap(doc, pageNum, wrapId){
+  const page = await doc.getPage(pageNum);
+  const viewport = page.getViewport({scale:1.3});
+  const wrap = document.getElementById(wrapId);
+  wrap.innerHTML = '';
+  const canvas = document.createElement('canvas');
+  canvas.width = viewport.width; canvas.height = viewport.height;
+  wrap.style.width = viewport.width+'px'; wrap.style.height = viewport.height+'px';
+  await page.render({canvasContext:canvas.getContext('2d'), viewport}).promise;
+  wrap.appendChild(canvas);
+  
+  const { w: svgW } = buildCardSVG();
+  const raster = await rasterizeCard(svgW);
+
+  const box = document.createElement('div');
+  box.className = 'canva-box';
+  updateBoxStyle(box);
+  
+  const img = document.createElement('img');
+  img.src = raster.dataUrl;
+  box.appendChild(img);
+
+  const label = document.createElement('div');
+  label.className = 'rlabel';
+  label.textContent = 'Live Template Workspace (Scale/Resize any edge or corner)';
+  box.appendChild(label);
+
+  const handles = ['tl', 'tr', 'bl', 'br', 'tm', 'bm', 'ml', 'mr'];
+  handles.forEach(hClass => {
+    const h = document.createElement('div');
+    h.className = `handle ${hClass}`;
+    h.dataset.handle = hClass;
+    box.appendChild(h);
+  });
+
+  wrap.appendChild(box);
+  makeCanvaBoxInteractive(box, viewport);
+  return viewport;
+}
+
+function updateBoxStyle(box){
+  box.style.left = canvaRect.x + 'px';
+  box.style.top = canvaRect.y + 'px';
+  box.style.width = canvaRect.w + 'px';
+  box.style.height = canvaRect.h + 'px';
+}
+
+function makeCanvaBoxInteractive(box, viewport){
+  let action = null;
+  let startX = 0, startY = 0;
+  let initRect = {};
+
+  box.addEventListener('pointerdown', (e) => {
+    startX = e.clientX;
+    startY = e.clientY;
+    initRect = {...canvaRect};
+
+    if (e.target.classList.contains('handle')) {
+      action = e.target.dataset.handle;
+    } else {
+      action = 'move';
+    }
+    box.setPointerCapture(e.pointerId);
+  });
+
+  box.addEventListener('pointermove', (e) => {
+    if (!action) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    if (action === 'move') {
+      canvaRect.x = initRect.x + dx;
+      canvaRect.y = initRect.y + dy;
+    } else {
+      let { x, y, w, h } = initRect;
+      if (action.includes('l')) {
+        const newW = w - dx;
+        if (newW > 40) { x = initRect.x + dx; w = newW; }
+      }
+      if (action.includes('r')) {
+        const newW = w + dx;
+        if (newW > 40) { w = newW; }
+      }
+      if (action.includes('t')) {
+        const newH = h - dy;
+        if (newH > 30) { y = initRect.y + dy; h = newH; }
+      }
+      if (action.includes('b')) {
+        const newH = h + dy;
+        if (newH > 30) { h = newH; }
+      }
+      canvaRect = { x, y, w, h };
+    }
+    updateBoxStyle(box);
+  });
+
+  box.addEventListener('pointerup', (e) => {
+    if (action) {
+      action = null;
+      box.releasePointerCapture(e.pointerId);
+    }
+  });
+}
+
+async function loadPreviewPage(){
+  if(!pdfDocProxy) return;
+  const bp = Math.min(pdfDocProxy.numPages, Math.max(1, parseInt(document.getElementById('bubblePageNum').value)||1));
+  await renderPageToWrap(pdfDocProxy, bp, 'bubbleWrap');
+}
+
+function overlayToPdfRect(rect, viewport){
+  const x0 = rect.x, y0 = rect.y;
+  const x1 = x0 + rect.w, y1 = y0 + rect.h;
+  const p1 = viewport.convertToPdfPoint(x0, y0);
+  const p2 = viewport.convertToPdfPoint(x1, y1);
+  const x = Math.min(p1[0], p2[0]);
+  const y = Math.min(p1[1], p2[1]);
+  const w = Math.abs(p2[0] - p1[0]);
+  const h = Math.abs(p2[1] - p1[1]);
+  const yTop = Math.max(p1[1], p2[1]);
+  return { x, y, w, h, yTop };
+}
+
+document.getElementById('applyBtn').addEventListener('click', async ()=>{
+  const status = document.getElementById('applyStatus');
+  const resultWrap = document.getElementById('resultWrap');
+  try{
+    status.textContent = 'Rendering card at full print resolution...';
+    
+    const bp = Math.min(pdfDocProxy.numPages, Math.max(1, parseInt(document.getElementById('bubblePageNum').value)||1));
+    const page = await pdfDocProxy.getPage(bp);
+    const viewport = page.getViewport({scale:1.3});
+
+    const bRectPre = overlayToPdfRect(canvaRect, viewport);
+    
+    const PDF_POINT_TO_PX = 300/72; 
+    const targetWidthPx = Math.round(bRectPre.w * PDF_POINT_TO_PX);
+    const raster = await rasterizeCard(targetWidthPx);
+    const pngBytes = await (await fetch(raster.dataUrl)).arrayBuffer();
+
+    status.textContent = 'Editing PDF and embedding template...';
+    const { PDFDocument, rgb } = PDFLib;
+    const pdfDoc = await PDFDocument.load(uploadedPdfBytes.slice());
+    const pngImage = await pdfDoc.embedPng(pngBytes);
+
+    const bRect = overlayToPdfRect(canvaRect, viewport);
+    const bPage = pdfDoc.getPage(bp-1);
+    
+    bPage.drawRectangle({ x: bRect.x, y: bRect.y, width: bRect.w, height: bRect.h, color: rgb(1,1,1) });
+    bPage.drawImage(pngImage, { x: bRect.x, y: bRect.y, width: bRect.w, height: bRect.h });
+
+    editedPdfBytes = await pdfDoc.save();
+    status.textContent = 'Done — preview below.';
+
+    const previewDoc = await pdfjsLib.getDocument({data: editedPdfBytes.slice()}).promise;
+    const previewPage = await previewDoc.getPage(bp);
+    const vp = previewPage.getViewport({scale:1.3});
+    const canvas = document.createElement('canvas');
+    canvas.width = vp.width; canvas.height = vp.height;
+    await previewPage.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise;
+    resultWrap.innerHTML = '<div class="pdf-preview-wrap"></div>';
+    resultWrap.querySelector('.pdf-preview-wrap').appendChild(canvas);
+
+    document.getElementById('exportRow').style.display='flex';
+  }catch(err){
+    console.error(err);
+    status.textContent = 'Error: '+err.message;
+  }
+});
+
+document.getElementById('downloadPdfBtn').addEventListener('click',()=>{
+  if(!editedPdfBytes) return;
+  const blob = new Blob([editedPdfBytes], {type:'application/pdf'});
+  const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='edited_quiz.pdf'; a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('downloadPngBtn').addEventListener('click',()=>{
+  const canvas = document.querySelector('#resultWrap canvas');
+  if(!canvas) return;
+  canvas.toBlob(blob=>{
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='bubble_page.png'; a.click();
+  });
+});
+
+/* init */
+renderCard();
+</script>
+</body>
+</html>

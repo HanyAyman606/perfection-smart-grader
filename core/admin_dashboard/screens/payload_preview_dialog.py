@@ -62,7 +62,7 @@ class PayloadPreviewDialog(QDialog):
         voided_by_version = packet.get("voided_questions", {})
         has_essays = packet.get("has_essays", False)
         essay_map = packet.get("essay_points_map", {})
-        template_path = packet.get("template_path", "")
+        mcq_columns = packet.get("mcq_columns", {})
 
         rows = [
             ("Exam", packet.get("exam_name", "—")),
@@ -77,13 +77,15 @@ class PayloadPreviewDialog(QDialog):
             label = f"Model Answers ({version})" if len(versions) > 1 else "Model Answers"
             rows.append((label, f"{len(answers)} answered · {len(voided)} voided · "
                                  f"{mcq_count - len(answers) - len(voided)} missing"))
+        cols_summary = ", ".join(
+            f"Col{c}:{n}" for c, n in mcq_columns.get("columns", {}).items()
+        ) or "—"
         rows += [
             ("Essay Questions", f"{len(essay_map)} question(s)" if has_essays else "Not included"),
-            ("ROI Template", "Saved ✔" if template_path else "⚠ Not saved"),
             ("Layout", f"{packet.get('choices_per_question', 4)} choices/Q · "
-                       f"{packet.get('questions_per_block', 10)} Q/block · "
-                       f"{packet.get('id_letter_count', 6)} ID letters · "
-                       f"{packet.get('id_digit_columns', '?')} ID digits"),
+                       f"{''.join(packet.get('id', {}).get('letters', []))} ID letters · "
+                       f"{packet.get('id', {}).get('num_digits', '?')} ID digits"),
+            ("MCQ Columns", f"{mcq_columns.get('num_cols', 3)} cols  ({cols_summary})"),
         ]
         for label, value in rows:
             content_layout.addWidget(self._build_row(label, value, mono, orbitron))
