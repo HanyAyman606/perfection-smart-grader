@@ -32,12 +32,14 @@ class CrossWorkspaceGroupSync:
             if not os.path.exists(db_path):
                 continue
             conn = sqlite3.connect(db_path)
-            conn.execute("DELETE FROM students WHERE group_name = ?", (group_name,))
             existing_tables = {
                 row[0] for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('grades', 'sessions')"
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('students', 'grades', 'sessions')"
                 )
             }
+            if "students" in existing_tables:
+                conn.execute("DELETE FROM students WHERE group_name = ?", (group_name,))
             if "sessions" in existing_tables and "grades" in existing_tables:
                 conn.execute(
                     "DELETE FROM grades WHERE session_id IN "
@@ -60,13 +62,21 @@ class CrossWorkspaceGroupSync:
             if not os.path.exists(db_path):
                 continue
             conn = sqlite3.connect(db_path)
-            conn.execute(
-                "UPDATE students SET group_name = ? WHERE group_name = ?",
-                (new_name, old_name),
-            )
-            conn.execute(
-                "UPDATE sessions SET group_name = ? WHERE group_name = ?",
-                (new_name, old_name),
-            )
+            existing_tables = {
+                row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name IN ('students', 'sessions')"
+                )
+            }
+            if "students" in existing_tables:
+                conn.execute(
+                    "UPDATE students SET group_name = ? WHERE group_name = ?",
+                    (new_name, old_name),
+                )
+            if "sessions" in existing_tables:
+                conn.execute(
+                    "UPDATE sessions SET group_name = ? WHERE group_name = ?",
+                    (new_name, old_name),
+                )
             conn.commit()
             conn.close()

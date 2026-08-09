@@ -1,0 +1,124 @@
+### === Repo-specific === ###
+# Duplicate/backup folder — not source, not tracked.
+edge_client (Copy)/
+
+
+### === Python / PySide6 (admin_dashboard) === ###
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Per-app secrets/config generated at runtime — never commit these,
+# auth_config.json holds the hashed admin password's salt+hash.
+# **/ prefix so this matches regardless of depth (e.g. core/admin_dashboard/...).
+**/admin_dashboard/config/auth_config.json
+**/admin_dashboard/config/recent_projects.json
+
+# Exam workspaces created via "New Workspace" — these are user data
+# (nexus_project.json, roster.db, cropped_template.jpg per project),
+# not source code.
+*.db
+*.db-journal
+
+# Exported result sheets
+*_Results.xlsx
+
+
+### === Flutter / Dart (edge_client mobile) === ###
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.flutter-versions
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+*.ipr
+*.iws
+.metadata
+
+# Flutter/Dart tool version files
+**/doc/api/
+.dart_tool/
+
+# Generated files
+**/generated_plugin_registrant.dart
+GeneratedPluginRegistrant.*
+
+# Coverage
+coverage/
+
+### --- Android --- ###
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/key.properties
+*.jks
+*.keystore
+
+### --- iOS --- ###
+**/ios/**/*.mode1v3
+**/ios/**/*.mode2v3
+**/ios/**/*.moved-aside
+**/ios/**/*.pbxuser
+**/ios/**/*.perspectivev3
+**/ios/**/*sync/
+**/ios/**/.sconsign.dblite
+**/ios/**/.tags*
+**/ios/**/.vagrant/
+**/ios/**/DerivedData/
+**/ios/**/Icon?
+**/ios/**/Pods/
+**/ios/**/.symlinks/
+**/ios/**/profile
+**/ios/**/xcuserdata
+**/ios/.generated/
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/flutter_assets/
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Native OMR engine build artifacts (rebuilt from source, not tracked)
+**/*.xcframework
+omr_engine/build/
+omr_engine/**/*.o
+omr_engine/**/*.dll
+omr_engine/**/*.dylib
+omr_engine/**/*.so
+
+### === OS / editor noise === ###
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
