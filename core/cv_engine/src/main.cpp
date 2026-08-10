@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <chrono>
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -18,40 +19,25 @@ int main(int argc, char** argv) {
     buffer << t.rdbuf();
     std::string config_json_str = buffer.str();
 
-    // Step 1: Extract panels
-    const char* step1_res_cstr = step1_extract_panels(image_path.c_str(), config_json_str.c_str());
-    if (!step1_res_cstr) {
-        std::cerr << "Error: step1_extract_panels returned null" << std::endl;
+    // Run combined in-memory processing
+    auto t_start = std::chrono::high_resolution_clock::now();
+    const char* res_cstr = process_exam_in_memory(image_path.c_str(), config_json_str.c_str());
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double time_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+    if (!res_cstr) {
+        std::cerr << "Error: process_exam_in_memory returned null" << std::endl;
         return 1;
     }
 
-    std::string step1_res = step1_res_cstr;
-    free_string(const_cast<char*>(step1_res_cstr));
+    std::string res = res_cstr;
+    free_string(const_cast<char*>(res_cstr));
 
-    nlohmann::json s1_json = nlohmann::json::parse(step1_res);
-    if (s1_json["status"] != "SUCCESS") {
-        std::cerr << "Step 1 Failed: " << step1_res << std::endl;
-        return 1;
-    }
+    std::cout << "--- Pipeline Success ---" << std::endl;
+    std::cout << res << std::endl;
 
-    std::string id_path = s1_json.contains("id_panel_path") ? s1_json["id_panel_path"].get<std::string>() : "";
-    std::string mcq_path = s1_json.contains("mcq_panel_path") ? s1_json["mcq_panel_path"].get<std::string>() : "";
-
-    std::cout << "--- Step 1 Success ---" << std::endl;
-    std::cout << step1_res << std::endl;
-
-    // Step 2: Infer and score
-    const char* step2_res_cstr = step2_infer_and_score(id_path.c_str(), mcq_path.c_str(), config_json_str.c_str());
-    if (!step2_res_cstr) {
-        std::cerr << "Error: step2_infer_and_score returned null" << std::endl;
-        return 1;
-    }
-
-    std::string step2_res = step2_res_cstr;
-    free_string(const_cast<char*>(step2_res_cstr));
-
-    std::cout << "--- Step 2 Success ---" << std::endl;
-    std::cout << step2_res << std::endl;
+    std::cout << "\n=== TIMING REPORT ===" << std::endl;
+    std::cout << "Total Time: " << time_ms << " ms" << std::endl;
 
     return 0;
 }

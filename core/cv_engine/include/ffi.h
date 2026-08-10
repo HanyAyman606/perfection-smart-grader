@@ -25,5 +25,6 @@
 extern "C" {
     AI_CORRECTOR_EXPORT const char* step1_extract_panels(const char* image_path, const char* config_json);
     AI_CORRECTOR_EXPORT const char* step2_infer_and_score(const char* id_panel_path, const char* mcq_panel_path, const char* config_json);
+    AI_CORRECTOR_EXPORT const char* process_exam_in_memory(const char* image_path, const char* config_json);
     AI_CORRECTOR_EXPORT void free_string(char* str);
 }
