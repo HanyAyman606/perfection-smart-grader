@@ -102,8 +102,15 @@ coverage/
 **/ios/ServiceDefinitions.json
 **/ios/Runner/GeneratedPluginRegistrant.*
 
-# Native OMR engine build artifacts (rebuilt from source, not tracked)
+# Native CV/OMR engine build artifacts (rebuilt from source, not tracked)
+# NOTE: renamed from omr_engine -> cv_engine; kept both prefixes in case
+# any legacy omr_engine/ folder still exists in a working tree.
 **/*.xcframework
+cv_engine/build/
+cv_engine/**/*.o
+cv_engine/**/*.dll
+cv_engine/**/*.dylib
+cv_engine/**/*.so
 omr_engine/build/
 omr_engine/**/*.o
 omr_engine/**/*.dll
