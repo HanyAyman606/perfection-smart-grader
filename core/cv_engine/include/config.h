@@ -54,7 +54,11 @@ struct ExamConfig {
 
 inline void from_json(const nlohmann::json& j, IDConfig& c) {
     if (j.contains("num_digits")) j.at("num_digits").get_to(c.num_digits);
-    if (j.contains("num_letters")) j.at("num_letters").get_to(c.num_letters);
+    
+    // The Flutter frontend sends 'num_letters' to mean the number of letters in the pool (e.g., 6 for A-F).
+    // The physical layout of the paper statically has exactly 1 letter column.
+    c.num_letters = 1; 
+
     if (j.contains("letters")) j.at("letters").get_to(c.letters);
 }
 

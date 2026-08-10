@@ -8,28 +8,30 @@ This document outlines the JSON schemas required to communicate between the Flut
 
 Whenever you call an FFI function, you must provide the configuration JSON as a raw `String`. This tells the AI how to interpret the physical exam sheet.
 
-```json
-{
-  "model_path": "path/to/bubble.onnx",
-  "num_questions": 16,
-  "num_choices": 4,
-  "mcq_columns": {
-    "num_cols": 3,
-    "columns": {
-      "1": 5,
-      "2": 5,
-      "3": 6
-    }
-  },
-  "row_tolerance_px": 15,
-  "id": {
-    "num_digits": 3,
-    "num_letters": 1,
-    "letters": [
-      "A", "B", "C", "D", "E", "F"
-    ]
+```dart
+  /// Builds the JSON string passed as `config_json_str` into both
+  /// step1_extract_panels and step2_infer_and_score. This is the
+  /// translation layer between the dashboard's wire format and the C++
+  /// engine's ExamConfig::from_json (see config.h) — field names and
+  /// shapes intentionally differ from the dashboard packet above because
+  /// each side owns its own contract; this is the one place they meet.
+  String toExamConfigJson({required String modelPath, int rowTolerancePx = 15}) {
+    return jsonEncode({
+      'model_path': modelPath,
+      'num_questions': mcqCount,
+      'num_choices': choicesPerQuestion,
+      'row_tolerance_px': rowTolerancePx,
+      // Authoritative shape — matches config.h's preferred parse path
+      // exactly, so num_question_columns AND mcq_column_sizes are both
+      // derived from the real printed layout, never re-guessed.
+      'mcq_columns': mcqColumns.toJson(),
+      'id': {
+        'num_digits': idNumDigits,
+        'num_letters': idNumLetters,
+        'letters': idLetters,
+      },
+    });
   }
-}
 ```
 
 ### Field Definitions
@@ -41,8 +43,8 @@ Whenever you call an FFI function, you must provide the configuration JSON as a 
   * `columns`: (Map of String to Integer) Key is the 1-based column index, value is the number of questions in that column.
 * `row_tolerance_px`: (Integer) Pixel variance allowed to group bubbles into a single horizontal row. (Default: 15).
 * `id.num_digits`: (Integer) Number of columns dedicated to student ID numbers.
-* `id.num_letters`: (Integer) Number of columns dedicated to student ID letters.
-* `id.letters`: (Array of Strings) The exact ordered letters printed in the ID letter column.
+* `id.num_letters`: (Integer) Number of letters in the pool (e.g. 6 for A-F). Note: The engine statically assumes there is exactly 1 letter column on the paper.
+* `id.letters`: (Array of Strings) The exact ordered letters printed in the ID letter pool.
 
 ---
 

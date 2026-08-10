@@ -1,0 +1,21 @@
+{
+  "model_path": "../models/best.onnx",
+  "num_questions": 16,
+  "num_choices": 4,
+  "row_tolerance_px": 15,
+  "mcq_columns": {
+    "num_cols": 3,
+    "columns": {
+      "1": 5,
+      "2": 5,
+      "3": 6
+    }
+  },
+  "id": {
+    "num_digits": 3,
+    "num_letters": 6,
+    "letters": [
+      "C", "D", "E", "F", "M", "W"
+    ]
+  }
+}
