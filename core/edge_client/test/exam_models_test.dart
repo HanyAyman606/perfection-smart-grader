@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nexus_edge_mobile/models/exam_models.dart';
+import 'package:nexus_edge/domain/entities/exam_models.dart';
 
 void main() {
   group('McqRange', () {

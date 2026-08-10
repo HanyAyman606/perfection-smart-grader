@@ -1,10 +1,10 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
-project(nexus_edge_mobile LANGUAGES CXX)
+project(nexus_edge LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "nexus_edge_mobile")
+set(BINARY_NAME "nexus_edge")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -86,6 +86,33 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# --- cv_engine native library + its own runtime dependencies -----------
+# Flutter's Dart FFI layer (NativeCvBindings) calls
+# DynamicLibrary.open('ai_corrector.dll') at startup, so this DLL -- and
+# everything IT depends on at runtime (onnxruntime.dll, OpenCV's runtime
+# DLL) -- must land next to the built nexus_edge.exe, the same way
+# Flutter's own runtime DLLs do above. Paths point at the already-built
+# cv_engine/build output and the extracted OpenCV/ONNX Runtime packages;
+# adjust CV_ENGINE_BUILD_DIR / OPENCV_BIN_DIR / ONNXRUNTIME_ROOT below if
+# your local paths differ from what was used to build this project.
+#
+# get_filename_component(... ABSOLUTE) fully resolves the ../ traversal
+# into a clean absolute path at configure time, rather than leaving a
+# relative path with ../ segments for file(INSTALL) to resolve at install
+# time -- this removes any path-resolution ambiguity as a possible cause
+# if file(INSTALL) reports a file missing despite it existing on disk.
+get_filename_component(CV_ENGINE_BUILD_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../cv_engine/build" ABSOLUTE)
+set(OPENCV_BIN_DIR "C:/opencv/opencv/build/x64/vc16/bin")
+set(ONNXRUNTIME_ROOT "C:/Users/asus/Downloads/onnxruntime-win-x64-1.28.0/onnxruntime-win-x64-1.28.0")
+
+install(FILES
+    "${CV_ENGINE_BUILD_DIR}/ai_corrector.dll"
+    "${OPENCV_BIN_DIR}/opencv_world4120d.dll"
+    "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")
