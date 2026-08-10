@@ -26,6 +26,7 @@ std::unordered_map<std::string, Ort::Session*> session_map;
 std::mutex session_map_mutex;
 Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "ai_corrector");
 Ort::SessionOptions session_options;
+bool session_options_configured = false;
 
 // Guards session_map against concurrent access. The Flutter side calls
 // Step 1/Step 2 via compute(), which runs on separate OS threads inside
@@ -35,6 +36,14 @@ Ort::SessionOptions session_options;
 // in this library or the Dart FFI layer serializes calls into it.
 Ort::Session& get_session(const std::string& model_path) {
     std::lock_guard<std::mutex> lock(session_map_mutex);
+    
+    if (!session_options_configured) {
+        // Mobile-specific optimizations
+        session_options.SetIntraOpNumThreads(4);
+        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        session_options_configured = true;
+    }
+
     auto it = session_map.find(model_path);
     if (it == session_map.end()) {
 #ifdef _WIN32

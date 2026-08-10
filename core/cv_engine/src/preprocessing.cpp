@@ -539,6 +539,7 @@ cv::Mat prepare_image(const std::string& image_path) {
 }
 
 std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_from_raw(const std::string& raw_image_path) {
+    cv::setNumThreads(4);
     cv::Mat img = cv::imread(raw_image_path);
     if (img.empty()) throw std::runtime_error("Could not load raw image: " + raw_image_path);
 
