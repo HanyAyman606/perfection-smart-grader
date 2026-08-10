@@ -38,7 +38,14 @@ Whenever you call an FFI function, you must provide the configuration JSON as a 
 * `num_choices`: (Integer) Number of choices per question (e.g. 4 means A, B, C, D).
 * `mcq_columns`: (Object) Defines the exact layout of the MCQ panel.
 * `row_tolerance_px`: (Integer) Pixel variance allowed to group bubbles into a single horizontal row. (Default: 15).
-* `tuning`: (Object) Optional override block for engine thresholds (e.g., `blur`, `exposure`, `min_panel_area_ratio`, `max_quad_angle_deg`, etc.).
+* `tuning`: (Object) Optional override block for engine thresholds. If a field is omitted, the engine uses these hardcoded defaults:
+  * `blur`: (Double) Threshold for Laplacian variance. (Default: `15.0`)
+  * `exposure`: (Double) Minimum ratio of dark pixels required on a panel to not be considered washed out. (Default: `0.02`)
+  * `min_panel_area_ratio`: (Double) Minimum area a panel quad must take up relative to the whole image. (Default: `0.005`)
+  * `max_panel_area_ratio`: (Double) Maximum area a panel quad can take up relative to the whole image. (Default: `0.45`)
+  * `max_quad_side_ratio`: (Double) Maximum allowed ratio between opposite sides of a detected panel to ensure it isn't wildly distorted. (Default: `2.2`)
+  * `min_quad_angle_deg`: (Double) Minimum allowed interior angle for a detected panel corner. (Default: `35.0`)
+  * `max_quad_angle_deg`: (Double) Maximum allowed interior angle for a detected panel corner. (Default: `145.0`)
 
 ---
 
