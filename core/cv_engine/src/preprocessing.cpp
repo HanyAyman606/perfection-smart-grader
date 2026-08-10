@@ -6,6 +6,50 @@
 
 namespace {
 
+// Laplacian variance is measured after resizing to this fixed reference
+// width, so the score means the same thing regardless of the capturing
+// phone's native camera resolution (raw variance scales with resolution,
+// so an un-normalized threshold tuned against one phone's output would
+// silently drift wrong on another phone's higher/lower-res photos).
+constexpr int BLUR_REFERENCE_WIDTH = 1000;
+
+// Below this normalized Laplacian variance, the photo is considered too
+// blurry to trust and a retake is forced.
+//
+// Calibrated against a batch of 9 real proctor-style photos (different
+// lighting, framing, phone orientation) -- every one of those photos was
+// fully legible with normalized scores ranging ~56-295, so a threshold
+// anywhere near the old placeholder (60) would have force-rejected a
+// perfectly good scan. This value is set comfortably below that whole
+// observed "good photo" range, leaving headroom to still catch genuine
+// motion/focus blur (which produces much lower scores -- document-scan
+// literature generally puts real unusable blur under ~20-30 on a
+// normalized scale). Revisit if real-world retake complaints or missed
+// detections suggest it needs adjusting either direction.
+constexpr double BLUR_VARIANCE_THRESHOLD = 15.0;
+
+double compute_blur_score(const cv::Mat& img) {
+    cv::Mat gray;
+    if (img.channels() == 3) {
+        cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+    } else {
+        gray = img;
+    }
+
+    // Normalize to a fixed reference width before measuring, so the score
+    // is comparable across photos taken at different resolutions.
+    if (gray.cols != BLUR_REFERENCE_WIDTH && gray.cols > 0) {
+        double scale = (double)BLUR_REFERENCE_WIDTH / gray.cols;
+        cv::resize(gray, gray, cv::Size(), scale, scale, cv::INTER_AREA);
+    }
+
+    cv::Mat lap;
+    cv::Laplacian(gray, lap, CV_64F);
+    cv::Scalar mean, stddev;
+    cv::meanStdDev(lap, mean, stddev);
+    return stddev[0] * stddev[0]; // variance
+}
+
 cv::Point2f get_centroid(const std::vector<cv::Point>& contour) {
     cv::Moments M = cv::moments(contour);
     if (M.m00 != 0) {
@@ -60,11 +104,14 @@ std::vector<QuadInfo> find_panel_quads(const cv::Mat& img) {
     std::vector<QuadInfo> quads;
     for (const auto& c : cnts) {
         double a = cv::contourArea(c);
-        if (a < 0.03 * img_area || a > 0.45 * img_area) continue;
+        if (a < 0.001 * img_area || a > 0.45 * img_area) continue;
         double peri = cv::arcLength(c, true);
         std::vector<cv::Point> approx;
         cv::approxPolyDP(c, approx, 0.02 * peri, true);
         if (approx.size() == 4 && cv::isContourConvex(approx)) {
+            if (a < 0.005 * img_area) {
+                continue;
+            }
             quads.push_back({a, order_pts(approx)});
         }
     }
@@ -95,14 +142,16 @@ std::vector<QuadInfo> find_panel_quads(const cv::Mat& img) {
     return kept;
 }
 
-std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv::Point2f>>> classify_quads(const std::vector<QuadInfo>& kept, int h, int w) {
-    if (kept.empty()) return {std::nullopt, std::nullopt};
+std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv::Point2f>>, bool> classify_quads(const std::vector<QuadInfo>& kept, int h, int w) {
+    if (kept.empty()) return {std::nullopt, std::nullopt, false};
     std::vector<cv::Mat> masks;
     for (const auto& q : kept) masks.push_back(get_quad_mask(q.quad, h, w));
 
     int n = kept.size();
     std::vector<bool> is_container(n, false);
+    bool container_found = false;
     for (int i = 0; i < n; ++i) {
+        int contains = 0;
         for (int j = 0; j < n; ++j) {
             if (i != j) {
                 cv::Mat inter;
@@ -110,9 +159,15 @@ std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv
                 int inter_cnt = cv::countNonZero(inter);
                 int aj = cv::countNonZero(masks[j]);
                 if ((double)inter_cnt / std::max(aj, 1) > 0.85) {
-                    is_container[i] = true;
+                    contains++;
                 }
             }
+        }
+        
+        double area_ratio = kept[i].area / (h * (double)w);
+        if (contains >= 2 || (contains == 1 && area_ratio > 0.20)) {
+            is_container[i] = true;
+            container_found = true;
         }
     }
 
@@ -122,15 +177,70 @@ std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv
     }
     std::sort(leaves.begin(), leaves.end(), [](const QuadInfo& a, const QuadInfo& b){ return a.area > b.area; });
 
-    if (leaves.empty()) return {std::nullopt, std::nullopt};
-    if (leaves.size() == 1) return {std::nullopt, leaves[0].quad};
+    if (leaves.empty()) return {std::nullopt, std::nullopt, container_found};
+    if (leaves.size() == 1) return {std::nullopt, leaves[0].quad, container_found};
 
-    return {leaves[1].quad, leaves[0].quad};
+    return {leaves[1].quad, leaves[0].quad, container_found};
 }
 
-std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv::Point2f>>> stage1_detect_quads(const cv::Mat& img) {
+std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv::Point2f>>, bool> stage1_detect_quads(const cv::Mat& img) {
     auto kept = find_panel_quads(img);
     return classify_quads(kept, img.rows, img.cols);
+}
+
+// Pure read-only geometric sanity check on an already-found quad. Does
+// NOT change what find_panel_quads/classify_quads detect or select --
+// this only measures whether the 4 corner points that were already
+// chosen look like a real, usable panel rectangle, so a garbage quad
+// (extreme oblique angle, panel mostly cut off but still passing the
+// area/convexity checks) can be caught as a warning rather than silently
+// producing a warped crop full of the wrong content.
+bool quad_geometry_is_sane(const std::vector<cv::Point2f>& quad) {
+    if (quad.size() != 4) return false;
+
+    cv::Point2f tl = quad[0], tr = quad[1], br = quad[2], bl = quad[3];
+    double top = cv::norm(tr - tl);
+    double bottom = cv::norm(br - bl);
+    double left = cv::norm(bl - tl);
+    double right = cv::norm(br - tr);
+
+    if (top < 1.0 || bottom < 1.0 || left < 1.0 || right < 1.0) return false;
+
+    // Opposite sides of a real rectangle-ish panel, even under real-world
+    // perspective skew, shouldn't differ wildly in length. A cut-off or
+    // extremely oblique capture tends to produce one very short side
+    // (part of the panel outside the frame) or one very long side
+    // (foreshortened by the angle) relative to its opposite.
+    double horiz_ratio = std::max(top, bottom) / std::min(top, bottom);
+    double vert_ratio = std::max(left, right) / std::min(left, right);
+    constexpr double MAX_SIDE_RATIO = 2.2;
+    if (horiz_ratio > MAX_SIDE_RATIO || vert_ratio > MAX_SIDE_RATIO) return false;
+
+    // Interior angles of a real (even skewed) rectangle stay well clear
+    // of 0/180 degrees. A near-degenerate quad (corners nearly collinear
+    // -- a sign of a bad detection, not a real panel corner) produces an
+    // angle close to a straight line.
+    auto angle_deg = [](const cv::Point2f& a, const cv::Point2f& b, const cv::Point2f& c) {
+        cv::Point2f v1 = a - b, v2 = c - b;
+        double dot = v1.x * v2.x + v1.y * v2.y;
+        double mag = cv::norm(v1) * cv::norm(v2);
+        if (mag < 1e-6) return 0.0;
+        double cosA = std::max(-1.0, std::min(1.0, dot / mag));
+        return std::acos(cosA) * 180.0 / CV_PI;
+    };
+    double angles[4] = {
+        angle_deg(bl, tl, tr),
+        angle_deg(tl, tr, br),
+        angle_deg(tr, br, bl),
+        angle_deg(br, bl, tl),
+    };
+    constexpr double MIN_ANGLE_DEG = 35.0;
+    constexpr double MAX_ANGLE_DEG = 145.0;
+    for (double a : angles) {
+        if (a < MIN_ANGLE_DEG || a > MAX_ANGLE_DEG) return false;
+    }
+
+    return true;
 }
 
 cv::Mat stage2_warp(const cv::Mat& img, const std::vector<cv::Point2f>& quad) {
@@ -249,15 +359,34 @@ cv::Mat rotate_image(const cv::Mat& img, int angle) {
     return res;
 }
 
-std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, std::optional<int>> stage3_orient(
+// Ported from the original Python stage3_orient.py, including the reason
+// string and the explicit "don't guess, flag low confidence" branches that
+// were previously dropped when this was first ported to C++. MCQ panel
+// aspect ratio is the PRIMARY, blur-robust signal (portrait vs landscape);
+// the ID-panel square landmark is used only to disambiguate direction.
+struct OrientResult {
+    std::optional<cv::Mat> id_oriented;
+    std::optional<cv::Mat> mcq_oriented;
+    std::optional<int> angle;
+    std::string reason;
+    bool low_confidence = false;
+};
+
+OrientResult stage3_orient(
     const std::optional<cv::Mat>& id_warped,
     const std::optional<cv::Mat>& mcq_warped
 ) {
+    OrientResult result;
     std::optional<int> angle = std::nullopt;
+    std::string reason;
+    bool low_confidence = false;
 
     if (mcq_warped && id_warped) {
         int mh = mcq_warped->rows, mw = mcq_warped->cols;
         if (mw < mh) {
+            // currently portrait -> must rotate 90 either way. Use the
+            // ID-square landmark (if found) to pick WHICH 90; else default
+            // to CW and flag low confidence.
             auto pts = find_id_squares(*id_warped);
             if (pts) {
                 float sx = 0, sy = 0, sx2 = 0, sy2 = 0;
@@ -266,36 +395,74 @@ std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, std::optional<int>> s
                 float std_x = std::sqrt(std::max(0.0f, sx2/n - (sx/n)*(sx/n)));
                 float std_y = std::sqrt(std::max(0.0f, sy2/n - (sy/n)*(sy/n)));
                 if (std_x <= std_y) {
-                    auto res = decide_rotation(*pts, id_warped->rows, id_warped->cols);
-                    angle = std::get<0>(res);
+                    auto [a2, r2] = decide_rotation(*pts, id_warped->rows, id_warped->cols);
+                    angle = a2;
+                    reason = "mcq=portrait + " + r2;
                 } else {
                     angle = -90;
+                    reason = "mcq=portrait, squares ambiguous -> default 90 CW (LOW CONFIDENCE)";
+                    low_confidence = true;
                 }
             } else {
                 angle = -90;
+                reason = "mcq=portrait, squares not found -> default 90 CW (LOW CONFIDENCE, MANUAL CHECK)";
+                low_confidence = true;
             }
         } else {
+            // already landscape -> only need to check upside-down (0 vs 180)
             auto pts = find_id_squares(*id_warped);
             if (pts) {
-                auto res = decide_rotation(*pts, id_warped->rows, id_warped->cols);
-                angle = std::get<0>(res);
+                float sx = 0, sy = 0, sx2 = 0, sy2 = 0;
+                for (auto p : *pts) { sx += p.x; sy += p.y; sx2 += p.x*p.x; sy2 += p.y*p.y; }
+                float n = pts->size();
+                float std_x = std::sqrt(std::max(0.0f, sx2/n - (sx/n)*(sx/n)));
+                float std_y = std::sqrt(std::max(0.0f, sy2/n - (sy/n)*(sy/n)));
+                if (std_x > std_y) {
+                    auto [a2, r2] = decide_rotation(*pts, id_warped->rows, id_warped->cols);
+                    angle = a2;
+                    reason = "mcq=landscape + " + r2;
+                } else {
+                    // squares form a vertical line even though mcq looked
+                    // landscape -- trust the squares, they're a direct
+                    // landmark vs. a borderline aspect ratio.
+                    auto [a2, r2] = decide_rotation(*pts, id_warped->rows, id_warped->cols);
+                    angle = a2;
+                    reason = "mcq=landscape(borderline) but squares vertical, trusting squares: " + r2;
+                }
             } else {
                 angle = 0;
+                reason = "mcq=landscape, squares not found -> assume already correct (LOW CONFIDENCE, MANUAL CHECK)";
+                low_confidence = true;
             }
         }
     } else if (id_warped) {
         auto pts = find_id_squares(*id_warped);
         if (pts) {
-            auto res = decide_rotation(*pts, id_warped->rows, id_warped->cols);
-            angle = std::get<0>(res);
+            auto [a2, r2] = decide_rotation(*pts, id_warped->rows, id_warped->cols);
+            angle = a2;
+            reason = r2;
+        } else {
+            reason = "no mcq panel, squares not found - MANUAL CHECK NEEDED";
+            low_confidence = true;
         }
+    } else {
+        reason = "no id or mcq panel available for orientation";
+        low_confidence = true;
     }
 
-    if (!angle) return {id_warped, mcq_warped, std::nullopt};
+    result.angle = angle;
+    result.reason = reason;
+    result.low_confidence = low_confidence;
 
-    std::optional<cv::Mat> id_oriented = id_warped ? std::make_optional(rotate_image(*id_warped, *angle)) : std::nullopt;
-    std::optional<cv::Mat> mcq_oriented = mcq_warped ? std::make_optional(rotate_image(*mcq_warped, *angle)) : std::nullopt;
-    return {id_oriented, mcq_oriented, angle};
+    if (!angle) {
+        result.id_oriented = id_warped;
+        result.mcq_oriented = mcq_warped;
+        return result;
+    }
+
+    result.id_oriented = id_warped ? std::make_optional(rotate_image(*id_warped, *angle)) : std::nullopt;
+    result.mcq_oriented = mcq_warped ? std::make_optional(rotate_image(*mcq_warped, *angle)) : std::nullopt;
+    return result;
 }
 
 cv::Mat remove_shadow(const cv::Mat& gray, float alpha) {
@@ -371,26 +538,110 @@ cv::Mat prepare_image(const std::string& image_path) {
     return img;
 }
 
-std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>> prepare_from_raw(const std::string& raw_image_path) {
+std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_from_raw(const std::string& raw_image_path) {
     cv::Mat img = cv::imread(raw_image_path);
     if (img.empty()) throw std::runtime_error("Could not load raw image: " + raw_image_path);
 
-    auto quads = stage1_detect_quads(img);
+    QualityInfo quality;
+
+    // Blur check on the raw input, before any warping softens edges further.
+    quality.blur_score = compute_blur_score(img);
+    if (quality.blur_score < BLUR_VARIANCE_THRESHOLD) {
+        quality.warnings.push_back("BLUR");
+        quality.is_ok = false;
+    }
+
+    auto kept = find_panel_quads(img);
+    quality.num_quad_candidates = (int)kept.size();
+    auto quads = classify_quads(kept, img.rows, img.cols);
     auto id_quad = std::get<0>(quads);
     auto mcq_quad = std::get<1>(quads);
+    bool container_found = std::get<2>(quads);
+
+
+    if (!id_quad) {
+        quality.warnings.push_back("NO_ID_PANEL");
+        quality.is_ok = false;
+    } else if (!quad_geometry_is_sane(*id_quad)) {
+        // A quad WAS found (passed find_panel_quads' area/convexity
+        // checks) but its geometry doesn't look like a real panel corner
+        // set -- e.g. the sheet is cut off in the frame or shot at an
+        // extreme oblique angle so a garbage 4-point contour still
+        // slipped through. Catch it here rather than silently warping
+        // and cropping unusable content into Step 2.
+        quality.warnings.push_back("ID_PANEL_GEOMETRY_INVALID");
+        quality.is_ok = false;
+    }
+    if (!mcq_quad) {
+        quality.warnings.push_back("NO_MCQ_PANEL");
+        quality.is_ok = false;
+    } else if (!quad_geometry_is_sane(*mcq_quad)) {
+        quality.warnings.push_back("MCQ_PANEL_GEOMETRY_INVALID");
+        quality.is_ok = false;
+    }
 
     std::optional<cv::Mat> id_warped = id_quad ? std::make_optional(stage2_warp(img, *id_quad)) : std::nullopt;
     std::optional<cv::Mat> mcq_warped = mcq_quad ? std::make_optional(stage2_warp(img, *mcq_quad)) : std::nullopt;
 
+    // Re-check blur on the cropped/warped panels themselves, not just the
+    // raw photo. A photo can look sharp overall but end up soft in one
+    // corner after perspective correction (extreme skew stretches that
+    // area) -- the raw-photo check above can't see that, since it runs
+    // before warping. Uses the same normalized threshold as the raw check.
+    if (id_warped) {
+        quality.id_panel_blur_score = compute_blur_score(*id_warped);
+        if (quality.id_panel_blur_score < BLUR_VARIANCE_THRESHOLD) {
+            quality.warnings.push_back("ID_PANEL_BLUR");
+            quality.is_ok = false;
+        }
+    }
+    if (mcq_warped) {
+        quality.mcq_panel_blur_score = compute_blur_score(*mcq_warped);
+        if (quality.mcq_panel_blur_score < BLUR_VARIANCE_THRESHOLD) {
+            quality.warnings.push_back("MCQ_PANEL_BLUR");
+            quality.is_ok = false;
+        }
+    }
+
     auto orient_res = stage3_orient(id_warped, mcq_warped);
-    auto id_oriented = std::get<0>(orient_res);
-    auto mcq_oriented = std::get<1>(orient_res);
-    auto angle = std::get<2>(orient_res);
+    quality.orientation_reason = orient_res.reason;
+    if (orient_res.low_confidence) {
+        quality.warnings.push_back("ORIENTATION_LOW_CONFIDENCE");
+        // Orientation being uncertain doesn't force a retake on its own
+        // (this mirrors the original Python design: pass through unrotated
+        // rather than mis-rotate) -- it's surfaced as a warning so the
+        // proctor's preview screen can flag it, but is_ok/blur/panel-found
+        // checks above are the hard retake triggers.
+    }
 
-    std::optional<cv::Mat> id_final = id_oriented ? std::make_optional(stage4_to_bgr(*id_oriented, "id")) : std::nullopt;
-    std::optional<cv::Mat> mcq_final = mcq_oriented ? std::make_optional(stage4_to_bgr(*mcq_oriented, "mcq")) : std::nullopt;
+    std::optional<cv::Mat> id_final = orient_res.id_oriented ? std::make_optional(stage4_to_bgr(*orient_res.id_oriented, "id")) : std::nullopt;
+    std::optional<cv::Mat> mcq_final = orient_res.mcq_oriented ? std::make_optional(stage4_to_bgr(*orient_res.mcq_oriented, "mcq")) : std::nullopt;
 
-    return {id_final, mcq_final};
+    int total_pixels = 0;
+    int dark_pixels = 0;
+    if (id_final) {
+        cv::Mat gray;
+        cv::cvtColor(*id_final, gray, cv::COLOR_BGR2GRAY);
+        dark_pixels += cv::countNonZero(gray < 100);
+        total_pixels += gray.rows * gray.cols;
+    }
+    if (mcq_final) {
+        cv::Mat gray;
+        cv::cvtColor(*mcq_final, gray, cv::COLOR_BGR2GRAY);
+        dark_pixels += cv::countNonZero(gray < 100);
+        total_pixels += gray.rows * gray.cols;
+    }
+    if (total_pixels > 0) {
+        double dark_ratio = (double)dark_pixels / total_pixels;
+        // Tuned to 0.075: a perfectly blank, well-exposed template has ~0.09 dark ratio.
+        // Images below 0.075 are genuinely washed out or overexposed (e.g., 22.jpeg is ~0.04).
+        if (dark_ratio < 0.075) {
+            quality.warnings.push_back("EXPOSURE_TOO_HIGH");
+            quality.is_ok = false;
+        }
+    }
+
+    return {id_final, mcq_final, quality};
 }
 
 } // namespace preprocessing

@@ -32,7 +32,8 @@ std::vector<Detection> run_inference_mcq_adaptive(
     int num_choices,
     float conf_threshold = 0.25f,
     float fill_conf = 0.05f,
-    float iou_threshold = 0.45f
+    float iou_threshold = 0.45f,
+    const std::vector<int>& mcq_column_sizes = {}
 );
 
 } // namespace inference

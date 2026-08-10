@@ -2,6 +2,7 @@
 #include "grouping.h"
 #include <onnxruntime/onnxruntime_cxx_api.h>
 #include <unordered_map>
+#include <mutex>
 #include <cmath>
 #include <algorithm>
 #include <set>
@@ -22,10 +23,18 @@ int internal_class(int model_cls) {
 }
 
 std::unordered_map<std::string, Ort::Session*> session_map;
+std::mutex session_map_mutex;
 Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "ai_corrector");
 Ort::SessionOptions session_options;
 
+// Guards session_map against concurrent access. The Flutter side calls
+// Step 1/Step 2 via compute(), which runs on separate OS threads inside
+// this same loaded native library instance -- an unguarded map insert
+// (cold-start session creation) racing with a concurrent find() is a
+// real crash/corruption risk, not just a theoretical one, since nothing
+// in this library or the Dart FFI layer serializes calls into it.
 Ort::Session& get_session(const std::string& model_path) {
+    std::lock_guard<std::mutex> lock(session_map_mutex);
     auto it = session_map.find(model_path);
     if (it == session_map.end()) {
 #ifdef _WIN32
@@ -279,30 +288,123 @@ std::vector<std::vector<std::pair<float, float>>> estimate_id_grid(const std::ve
     auto col_xs = estimate_col_xs(dets, num_cols, w);
     float tol_x = w / (num_cols * 2.0f);
 
-    std::vector<std::vector<std::pair<float, float>>> grid;
-    for (int col_i = 0; col_i < num_cols; ++col_i) {
-        float col_x = col_xs[col_i];
-        int n_rows = col_sizes[col_i];
-        
-        std::vector<Detection> col_dets;
-        for (const auto& d : dets) {
-            if (std::abs(d.cx - col_x) < tol_x) col_dets.push_back(d);
+    std::vector<std::vector<Detection>> col_dets_list(num_cols);
+    for (const auto& d : dets) {
+        int best_col = -1;
+        float min_dist = tol_x;
+        for (int c = 0; c < num_cols; ++c) {
+            float dist = std::abs(d.cx - col_xs[c]);
+            if (dist < min_dist) {
+                min_dist = dist;
+                best_col = c;
+            }
+        }
+        if (best_col != -1) {
+            col_dets_list[best_col].push_back(d);
+        }
+    }
+
+    std::vector<std::vector<std::pair<float, float>>> grid(num_cols);
+    std::unordered_map<int, std::vector<int>> size_to_cols;
+    for (int c = 0; c < num_cols; ++c) {
+        size_to_cols[col_sizes[c]].push_back(c);
+    }
+
+    for (const auto& kv : size_to_cols) {
+        int n_rows = kv.first;
+        const std::vector<int>& cols = kv.second;
+
+        std::vector<Detection> group_dets;
+        for (int c : cols) {
+            group_dets.insert(group_dets.end(), col_dets_list[c].begin(), col_dets_list[c].end());
         }
 
-        auto row_ys = estimate_row_ys(col_dets, n_rows, h);
-        std::vector<std::pair<float, float>> col_cells;
-        for (float ry : row_ys) col_cells.push_back({col_x, ry});
-        grid.push_back(col_cells);
+        auto raw_mega_rows = grouping::group_by_rows(group_dets, 15);
+        std::vector<Detection> virtual_col;
+        for (const auto& r : raw_mega_rows) {
+            if (!r.empty()) {
+                Detection v = r[0]; 
+                float sum_y = 0;
+                for (const auto& d : r) sum_y += d.cy;
+                v.cy = sum_y / r.size();
+                virtual_col.push_back(v);
+            }
+        }
+        
+        auto shared_row_ys = estimate_row_ys(virtual_col, n_rows, h);
+
+        if (n_rows > 1 && !shared_row_ys.empty()) {
+            float step_y = (shared_row_ys.back() - shared_row_ys.front()) / (n_rows - 1);
+            for (const auto& v : virtual_col) {
+                float my = v.cy;
+                int closest = 0;
+                float min_dist = std::abs(shared_row_ys[0] - my);
+                for (int i = 1; i < n_rows; ++i) {
+                    float dist = std::abs(shared_row_ys[i] - my);
+                    if (dist < min_dist) {
+                        min_dist = dist;
+                        closest = i;
+                    }
+                }
+                if (min_dist < step_y * 0.4f) {
+                    shared_row_ys[closest] = shared_row_ys[closest] * 0.5f + my * 0.5f;
+                }
+            }
+        }
+
+        for (int c : cols) {
+            float col_x = col_xs[c];
+            std::vector<std::pair<float, float>> col_cells;
+            for (int r = 0; r < n_rows; ++r) {
+                col_cells.push_back({col_x, shared_row_ys[r]});
+            }
+            grid[c] = col_cells;
+        }
     }
+
     return grid;
 }
 
 std::vector<std::vector<std::pair<float, float>>> estimate_mcq_grid(
-    const std::vector<Detection>& dets, int num_questions, int num_question_columns, int num_choices, const cv::Size& img_shape) {
+    const std::vector<Detection>& dets, int num_questions, int num_question_columns, int num_choices, const cv::Size& img_shape,
+    const std::vector<int>& mcq_column_sizes) {
     
     int h = img_shape.height, w = img_shape.width;
     int total_cols = num_question_columns * num_choices;
-    int rows_per_col = std::ceil((float)num_questions / num_question_columns);
+
+    // Per-column question counts. Prefer the authoritative printed-layout
+    // split (e.g. [9, 8, 8]) over a uniform ceil() applied to every
+    // column -- a uniform split is wrong whenever the real layout is
+    // uneven, both for where row anchors are predicted AND for which
+    // question number each grid cell corresponds to (see q_num below).
+    std::vector<int> col_sizes;
+    bool have_explicit_sizes = (int)mcq_column_sizes.size() == num_question_columns;
+    if (have_explicit_sizes) {
+        col_sizes = mcq_column_sizes;
+    } else {
+        int base_q = num_questions / num_question_columns;
+        int rem_q = num_questions % num_question_columns;
+        col_sizes.assign(num_question_columns, base_q);
+        for (int i = 0; i < rem_q; ++i) col_sizes[i]++;
+    }
+    // Row-anchor generation below still works off a single shared y-grid
+    // (sized to the tallest column) since bubbles across columns line up
+    // on the same physical rows on the printed sheet -- only the
+    // per-column question COUNT varies, not the row spacing. Using the
+    // max keeps every real row covered; extra trailing anchors in a
+    // shorter column are dropped by the q_num > col_sizes[q_col] check
+    // in the grid-assembly loop below.
+    int rows_per_col = 0;
+    for (int c : col_sizes) rows_per_col = std::max(rows_per_col, c);
+    // Running prefix offsets so question numbers are assigned correctly
+    // per column even when sizes differ, e.g. col0=[1..9], col1=[10..17],
+    // col2=[18..25] for {9,8,8} -- NOT col1 starting at 1+9=10 by
+    // coincidence, but computed explicitly so it stays correct for any
+    // split.
+    std::vector<int> col_start_q(num_question_columns, 1);
+    for (int i = 1; i < num_question_columns; ++i) {
+        col_start_q[i] = col_start_q[i - 1] + col_sizes[i - 1];
+    }
 
     float margin = 0.08f;
     float span = w * (1.0f - 2.0f * margin);
@@ -411,9 +513,15 @@ std::vector<std::vector<std::pair<float, float>>> estimate_mcq_grid(
         float cx = col_xs[c_idx];
         std::vector<std::pair<float, float>> col_cells;
         int q_col = c_idx / num_choices;
+        int q_col_size = col_sizes[q_col];
         for (int r_idx = 0; r_idx < rows_per_col; ++r_idx) {
+            // This column may be shorter than the shared row-anchor grid
+            // (e.g. col 1/2 of a {9,8,8} split only go up to row index 7,
+            // not 8) -- drop anchors past this column's real question
+            // count instead of assuming every column matches the tallest.
+            if (r_idx >= q_col_size) continue;
             float cy = row_ys[r_idx];
-            int q_num = q_col * rows_per_col + r_idx + 1;
+            int q_num = col_start_q[q_col] + r_idx;
             if (q_num > num_questions) continue;
             col_cells.push_back({cx, cy});
         }
@@ -476,8 +584,8 @@ std::vector<Detection> run_inference_id_adaptive(const cv::Mat& image, const std
             }
             if (covered) continue;
 
-            int roi_w = (int)(avg_bw * 3.5f);
-            int roi_h = (int)(avg_bh * 3.5f);
+            int roi_w = 500;
+            int roi_h = 500;
             int x0 = std::max(0, (int)(pred_cx - roi_w / 2.0f));
             int y0 = std::max(0, (int)(pred_cy - roi_h / 2.0f));
             int x1 = std::min(image.cols, x0 + roi_w);
@@ -514,11 +622,11 @@ std::vector<Detection> run_inference_id_adaptive(const cv::Mat& image, const std
     return dedup(kept_dets, iou_threshold);
 }
 
-std::vector<Detection> run_inference_mcq_adaptive(const cv::Mat& image, const std::string& model_path, int num_questions, int num_question_columns, int num_choices, float conf_threshold, float fill_conf, float iou_threshold) {
+std::vector<Detection> run_inference_mcq_adaptive(const cv::Mat& image, const std::string& model_path, int num_questions, int num_question_columns, int num_choices, float conf_threshold, float fill_conf, float iou_threshold, const std::vector<int>& mcq_column_sizes) {
     Ort::Session& sess = get_session(model_path);
     int num_tiles = std::max(1, (int)std::ceil((float)image.cols / TILE_MAX_W));
     auto initial_dets = infer_tiled(sess, image, conf_threshold, iou_threshold, num_tiles);
-    auto grid = estimate_mcq_grid(initial_dets, num_questions, num_question_columns, num_choices, image.size());
+    auto grid = estimate_mcq_grid(initial_dets, num_questions, num_question_columns, num_choices, image.size(), mcq_column_sizes);
 
     float avg_bw = 0.03f * std::min(image.rows, image.cols);
     float avg_bh = avg_bw;
@@ -545,8 +653,8 @@ std::vector<Detection> run_inference_mcq_adaptive(const cv::Mat& image, const st
             }
             if (covered) continue;
 
-            int roi_w = (int)(avg_bw * 3.5f);
-            int roi_h = (int)(avg_bh * 3.5f);
+            int roi_w = 500;
+            int roi_h = 500;
             int x0 = std::max(0, (int)(pred_cx - roi_w / 2.0f));
             int y0 = std::max(0, (int)(pred_cy - roi_h / 2.0f));
             int x1 = std::min(image.cols, x0 + roi_w);

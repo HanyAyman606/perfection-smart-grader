@@ -23,6 +23,7 @@ inline std::string get_class_name(int class_id) {
 const std::string STATE_BLANK = "BLANK";
 const std::string STATE_ANSWERED = "ANSWERED";
 const std::string STATE_MULTIPLE = "MULTIPLE";
+const std::string STATE_ERROR_MISSING = "ERROR_MISSING";
 
 struct Detection {
     float cx;
@@ -78,6 +79,8 @@ struct CorrectionResult {
     std::optional<std::string> student_id_letter;
     std::optional<std::string> annotated_id_image_path;
     std::optional<std::string> annotated_mcq_image_path;
+    bool id_needs_review = false;
+    bool has_missing_rows = false;
 
     nlohmann::json to_json_obj() const {
         nlohmann::json j;
@@ -91,6 +94,8 @@ struct CorrectionResult {
         j["questions"] = qs;
         if (annotated_id_image_path) j["annotated_id_image_path"] = annotated_id_image_path.value();
         if (annotated_mcq_image_path) j["annotated_mcq_image_path"] = annotated_mcq_image_path.value();
+        j["id_needs_review"] = id_needs_review;
+        j["has_missing_rows"] = has_missing_rows;
         return j;
     }
 

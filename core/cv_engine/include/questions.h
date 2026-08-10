@@ -13,10 +13,11 @@ std::vector<QuestionResult> process_questions(
     int num_questions,
     int num_question_columns,
     const std::vector<std::string>& choice_labels,
-    int row_tolerance_px
+    int row_tolerance_px,
+    const std::vector<int>& mcq_column_sizes = {}
 );
 
-std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optional<std::string>> process_student_id(
+std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optional<std::string>, bool> process_student_id(
     const std::vector<Detection>& detections,
     int num_digits,
     int num_letters,

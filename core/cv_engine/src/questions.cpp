@@ -9,7 +9,12 @@ namespace questions {
 
 namespace {
 
-std::vector<std::vector<Detection>> split_mega_row(const std::vector<Detection>& row, int num_groups) {
+std::vector<std::vector<Detection>> split_mega_row(
+    const std::vector<Detection>& row,
+    int num_groups,
+    const std::vector<int>& expected_sizes = {},
+    int row_index = -1
+) {
     if (num_groups <= 1 || row.size() <= (size_t)num_groups) return {row};
 
     std::vector<Detection> sorted_row = row;
@@ -37,11 +42,47 @@ std::vector<std::vector<Detection>> split_mega_row(const std::vector<Detection>&
     }
     groups.push_back(std::vector<Detection>(sorted_row.begin() + start, sorted_row.end()));
 
+    // Validate resulting group sizes against expectations
+    if (!expected_sizes.empty()) {
+        for (size_t g = 0; g < groups.size() && g < expected_sizes.size(); ++g) {
+            int actual = (int)groups[g].size();
+            int expected = expected_sizes[g];
+            int deviation = std::abs(actual - expected);
+            if (deviation > 1) {
+                std::cerr << "[SPLIT_WARN] row=" << row_index
+                          << " col=" << g
+                          << " expected=" << expected
+                          << " got=" << actual
+                          << " (deviation=" << deviation << ")"
+                          << std::endl;
+            }
+        }
+    }
+
     return groups;
 }
 
 std::vector<Detection> trim_to_best_subset(const std::vector<Detection>& group, int num_choices) {
     if (group.size() <= (size_t)num_choices) return group;
+
+    // Combinatorial fallback for noisy rows — C(n, k) for n>12 is
+    // too expensive. Pick the num_choices highest-confidence detections.
+    if (group.size() > 12) {
+        std::cerr << "[TRIM_WARN] group.size()=" << group.size()
+                  << " > 12, falling back to top-confidence selection"
+                  << std::endl;
+        std::vector<Detection> sorted_group = group;
+        std::sort(sorted_group.begin(), sorted_group.end(),
+            [](const Detection& a, const Detection& b) {
+                return a.confidence > b.confidence;
+            });
+        sorted_group.resize(num_choices);
+        std::sort(sorted_group.begin(), sorted_group.end(),
+            [](const Detection& a, const Detection& b) {
+                return a.cx < b.cx;
+            });
+        return sorted_group;
+    }
 
     std::vector<Detection> sorted_group = group;
     std::sort(sorted_group.begin(), sorted_group.end(), [](const Detection& a, const Detection& b){ return a.cx < b.cx; });
@@ -88,6 +129,14 @@ std::string label_at(int col_index, const std::vector<std::string>& choice_label
 }
 
 QuestionResult classify_row(int question_number, const std::vector<Detection>& row, const std::vector<std::string>& choice_labels) {
+    if (row.size() < choice_labels.size()) {
+        std::cerr << "[ROW_UNDERCOUNT_WARN] Q" << question_number
+                  << " expected " << choice_labels.size() << " detections but only got " << row.size() << ".\n"
+                  << "  Detected classes: ";
+        for (const auto& d : row) std::cerr << d.class_id << " ";
+        std::cerr << std::endl;
+    }
+
     std::vector<int> filled_indices;
     for (size_t i = 0; i < row.size(); ++i) {
         if (row[i].is_filled()) filled_indices.push_back(i);
@@ -140,18 +189,25 @@ IDColumnResult classify_column(const std::string& column_label, const std::vecto
     return {column_label, STATE_MULTIPLE, answers};
 }
 
-std::tuple<std::optional<std::string>, std::optional<std::string>> assemble_id(const std::vector<IDColumnResult>& columns, int num_letters) {
+std::tuple<std::optional<std::string>, std::optional<std::string>, bool> assemble_id(const std::vector<IDColumnResult>& columns, int num_letters) {
     std::string id_str, id_letter;
+    bool needs_review = false;
+    int answered_count = 0;
     for (int i = 0; i < (int)columns.size(); ++i) {
         const auto& col = columns[i];
-        if (col.state != STATE_ANSWERED || !std::holds_alternative<std::string>(col.answer)) {
-            return {std::nullopt, std::nullopt};
+        if (col.state == STATE_ANSWERED && std::holds_alternative<std::string>(col.answer)) {
+            std::string ans = std::get<std::string>(col.answer);
+            id_str += ans;
+            if (i < num_letters) id_letter += ans;
+            answered_count++;
+        } else {
+            id_str += "?";
+            if (i < num_letters) id_letter += "?";
+            needs_review = true;
         }
-        std::string ans = std::get<std::string>(col.answer);
-        id_str += ans;
-        if (i < num_letters) id_letter += ans;
     }
-    return {id_str, id_letter};
+    if (answered_count == 0) return {std::nullopt, std::nullopt, true};
+    return {id_str, id_letter, needs_review};
 }
 
 } // namespace
@@ -161,7 +217,8 @@ std::vector<QuestionResult> process_questions(
     int num_questions,
     int num_question_columns,
     const std::vector<std::string>& choice_labels,
-    int row_tolerance_px
+    int row_tolerance_px,
+    const std::vector<int>& mcq_column_sizes
 ) {
     auto raw_mega_rows = grouping::group_by_rows(detections, row_tolerance_px);
 
@@ -173,12 +230,23 @@ std::vector<QuestionResult> process_questions(
         if (r.size() >= (size_t)min_bubbles) mega_rows.push_back(r);
     }
 
-    int base_q = num_questions / num_question_columns;
-    int rem_q = num_questions % num_question_columns;
-    std::vector<int> cols_q(num_question_columns, base_q);
-    for (int i = 0; i < rem_q; ++i) cols_q[i]++;
+    // Prefer the authoritative per-column split from the printed template
+    // (see config.h::mcq_column_sizes) over re-deriving one here. The two
+    // happen to agree for a plain even split, but only the caller-supplied
+    // sizes are guaranteed to reflect the actual paper layout.
+    std::vector<int> cols_q;
+    bool have_explicit_sizes = (int)mcq_column_sizes.size() == num_question_columns;
+    if (have_explicit_sizes) {
+        cols_q = mcq_column_sizes;
+    } else {
+        int base_q = num_questions / num_question_columns;
+        int rem_q = num_questions % num_question_columns;
+        cols_q.assign(num_question_columns, base_q);
+        for (int i = 0; i < rem_q; ++i) cols_q[i]++;
+    }
 
-    int max_rows = base_q + (rem_q > 0 ? 1 : 0);
+    int max_rows = 0;
+    for (int c : cols_q) max_rows = std::max(max_rows, c);
 
     std::vector<std::vector<std::optional<std::vector<Detection>>>> question_grid(
         num_question_columns, std::vector<std::optional<std::vector<Detection>>>(max_rows, std::nullopt)
@@ -187,7 +255,15 @@ std::vector<QuestionResult> process_questions(
     for (size_t row_idx = 0; row_idx < mega_rows.size(); ++row_idx) {
         if (row_idx >= (size_t)max_rows) break;
 
-        auto groups = split_mega_row(mega_rows[row_idx], num_question_columns);
+        // Build per-column expected bubble counts for this row
+        std::vector<int> row_expected;
+        for (int c = 0; c < num_question_columns; ++c) {
+            row_expected.push_back(
+                (int)row_idx < cols_q[c] ? (int)choice_labels.size() : 0
+            );
+        }
+        auto groups = split_mega_row(mega_rows[row_idx], num_question_columns,
+                                     row_expected, (int)row_idx);
         for (size_t col_idx = 0; col_idx < groups.size(); ++col_idx) {
             if (col_idx < (size_t)num_question_columns) {
                 if (row_idx < (size_t)cols_q[col_idx]) {
@@ -203,8 +279,8 @@ std::vector<QuestionResult> process_questions(
     for (int col_idx = 0; col_idx < num_question_columns; ++col_idx) {
         for (int row_idx = 0; row_idx < cols_q[col_idx]; ++row_idx) {
             const auto& cell = question_grid[col_idx][row_idx];
-            if (!cell.has_value()) {
-                results.push_back({current_q, STATE_BLANK, std::monostate{}});
+            if (!cell.has_value() || cell->empty()) {
+                results.push_back({current_q, STATE_ERROR_MISSING, std::monostate{}});
             } else {
                 results.push_back(classify_row(current_q, *cell, choice_labels));
             }
@@ -219,7 +295,7 @@ std::vector<QuestionResult> process_questions(
     return results;
 }
 
-std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optional<std::string>> process_student_id(
+std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optional<std::string>, bool> process_student_id(
     const std::vector<Detection>& detections,
     int num_digits,
     int num_letters,
@@ -234,8 +310,8 @@ std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optiona
     for (int col_idx = 0; col_idx < total_cols; ++col_idx) {
         std::string label = col_idx < (int)column_labels.size() ? column_labels[col_idx] : "COL_" + std::to_string(col_idx);
 
-        if (col_idx >= (int)columns.size()) {
-            id_col_results.push_back({label, STATE_BLANK, std::monostate{}});
+        if (col_idx >= (int)columns.size() || columns[col_idx].empty()) {
+            id_col_results.push_back({label, STATE_ERROR_MISSING, std::monostate{}});
             continue;
         }
 
@@ -246,8 +322,8 @@ std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optiona
         id_col_results.push_back(classify_column(label, col_dets, row_labels));
     }
 
-    auto [id_str, id_letter] = assemble_id(id_col_results, num_letters);
-    return {id_col_results, id_str, id_letter};
+    auto [id_str, id_letter, needs_review] = assemble_id(id_col_results, num_letters);
+    return {id_col_results, id_str, id_letter, needs_review};
 }
 
 } // namespace questions
