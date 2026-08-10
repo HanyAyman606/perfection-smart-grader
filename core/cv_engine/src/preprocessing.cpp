@@ -452,7 +452,8 @@ OrientResult stage3_orient(
 
 cv::Mat remove_shadow(const cv::Mat& gray, float alpha) {
     int h = gray.rows, w = gray.cols;
-    int k = std::max(35, (std::min(h, w) / 6) | 1);
+    // Cap the kernel size to 51 to prevent massive CPU overhead, but keep it large enough (> bubbles)
+    int k = std::max(35, std::min(51, (std::min(h, w) / 15) | 1));
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(k, k));
     cv::Mat bg;
     cv::morphologyEx(gray, bg, cv::MORPH_CLOSE, kernel);
@@ -469,7 +470,8 @@ cv::Mat remove_shadow(const cv::Mat& gray, float alpha) {
 cv::Mat to_yolo_grayscale(const cv::Mat& gray, float alpha = 2.5f) {
     cv::Mat flat = remove_shadow(gray, alpha);
     cv::Mat denoised;
-    cv::bilateralFilter(flat, denoised, 7, 45, 45);
+    // Replaced expensive bilateral filter with a simpler Gaussian blur to save CPU
+    cv::GaussianBlur(flat, denoised, cv::Size(5, 5), 0);
     auto clahe = cv::createCLAHE(1.5, cv::Size(16, 16));
     cv::Mat res;
     clahe->apply(denoised, res);
@@ -527,6 +529,13 @@ std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_
     cv::setNumThreads(4);
     cv::Mat img = cv::imread(raw_image_path);
     if (img.empty()) throw std::runtime_error("Could not load raw image: " + raw_image_path);
+
+    // Downscale early to save massive CPU cycles on 12MP+ camera photos
+    constexpr int MAX_DIM = 1500;
+    if (img.cols > MAX_DIM || img.rows > MAX_DIM) {
+        double scale = (double)MAX_DIM / std::max(img.cols, img.rows);
+        cv::resize(img, img, cv::Size(), scale, scale, cv::INTER_AREA);
+    }
 
     QualityInfo quality;
 
