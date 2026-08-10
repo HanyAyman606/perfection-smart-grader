@@ -1,25 +1,27 @@
 import '../entities/exam_models.dart' show MasterPacket, GradeResult;
-import '../../data/scanning/cv_engine_service.dart' show PanelExtractionResult;
+import '../../data/scanning/cv_engine_service.dart' show ProcessExamResult;
 
-/// Contract for the two-step scan pipeline (panel extraction, then
-/// inference/scoring). Today backed by [CvEngineService], which talks
-/// to the native cv_engine library over FFI — but nothing above this
-/// layer should need to know FFI is involved, only that it can hand
-/// over an image and get a result back.
-///
-/// Mirrors CvEngineService's current public API exactly — no behavior
-/// change in this step.
+/// Contract for the single-call scan pipeline (panel extraction +
+/// inference/scoring in one native call). Today backed by [CvEngineService],
+/// which talks to the native cv_engine library over FFI via
+/// process_exam_in_memory — but nothing above this layer should need to
+/// know FFI is involved, only that it can hand over a raw image and get
+/// a result back.
 abstract class ScanEngineRepository {
-  /// Step 1: locate and crop the ID/MCQ panels from a raw photo and
-  /// report scan quality (blur, orientation confidence, etc).
-  Future<PanelExtractionResult> extractPanels({
+  /// Single pipeline call: locate and crop the ID/MCQ panels, run OCR/bubble
+  /// inference, and return both the scan quality signal and grading payload.
+  /// The caller checks [ProcessExamResult.mustRetake] to decide whether to
+  /// show an error screen or build a [GradeResult] and proceed to review.
+  Future<ProcessExamResult> extractPanels({
     required String rawImagePath,
     required String modelPath,
     required MasterPacket masterPacket,
   });
 
-  /// Step 2: run OCR/bubble inference on the extracted panels and
-  /// score against the selected answer version.
+  /// Kept for interface compatibility. The actual work is done inside
+  /// [extractPanels] via process_exam_in_memory. Use
+  /// [CvEngineService.buildGradeResult] to convert a [ProcessExamResult]
+  /// into a [GradeResult] for the grading review screen.
   Future<GradeResult> inferAndScore({
     required String idPanelPath,
     required String mcqPanelPath,

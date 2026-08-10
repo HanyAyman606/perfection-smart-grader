@@ -13,20 +13,8 @@ namespace {
 // silently drift wrong on another phone's higher/lower-res photos).
 constexpr int BLUR_REFERENCE_WIDTH = 1000;
 
-// Below this normalized Laplacian variance, the photo is considered too
-// blurry to trust and a retake is forced.
-//
-// Calibrated against a batch of 9 real proctor-style photos (different
-// lighting, framing, phone orientation) -- every one of those photos was
-// fully legible with normalized scores ranging ~56-295, so a threshold
-// anywhere near the old placeholder (60) would have force-rejected a
-// perfectly good scan. This value is set comfortably below that whole
-// observed "good photo" range, leaving headroom to still catch genuine
-// motion/focus blur (which produces much lower scores -- document-scan
-// literature generally puts real unusable blur under ~20-30 on a
-// normalized scale). Revisit if real-world retake complaints or missed
-// detections suggest it needs adjusting either direction.
-constexpr double BLUR_VARIANCE_THRESHOLD = 15.0;
+// Default fallback for blur threshold
+constexpr double DEFAULT_BLUR_VARIANCE_THRESHOLD = 15.0;
 
 double compute_blur_score(const cv::Mat& img) {
     cv::Mat gray;
@@ -88,7 +76,7 @@ struct QuadInfo {
     std::vector<cv::Point2f> quad;
 };
 
-std::vector<QuadInfo> find_panel_quads(const cv::Mat& img) {
+std::vector<QuadInfo> find_panel_quads(const cv::Mat& img, const ThresholdConfig& config) {
     int h = img.rows, w = img.cols;
     double img_area = h * w;
     cv::Mat gray, edges;
@@ -104,12 +92,12 @@ std::vector<QuadInfo> find_panel_quads(const cv::Mat& img) {
     std::vector<QuadInfo> quads;
     for (const auto& c : cnts) {
         double a = cv::contourArea(c);
-        if (a < 0.001 * img_area || a > 0.45 * img_area) continue;
+        if (a < config.min_panel_area_ratio * img_area || a > config.max_panel_area_ratio * img_area) continue;
         double peri = cv::arcLength(c, true);
         std::vector<cv::Point> approx;
         cv::approxPolyDP(c, approx, 0.02 * peri, true);
         if (approx.size() == 4 && cv::isContourConvex(approx)) {
-            if (a < 0.005 * img_area) {
+            if (a < config.min_panel_area_ratio * img_area) {
                 continue;
             }
             quads.push_back({a, order_pts(approx)});
@@ -183,8 +171,8 @@ std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv
     return {leaves[1].quad, leaves[0].quad, container_found};
 }
 
-std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv::Point2f>>, bool> stage1_detect_quads(const cv::Mat& img) {
-    auto kept = find_panel_quads(img);
+std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv::Point2f>>, bool> stage1_detect_quads(const cv::Mat& img, const ThresholdConfig& config) {
+    auto kept = find_panel_quads(img, config);
     return classify_quads(kept, img.rows, img.cols);
 }
 
@@ -195,7 +183,7 @@ std::tuple<std::optional<std::vector<cv::Point2f>>, std::optional<std::vector<cv
 // (extreme oblique angle, panel mostly cut off but still passing the
 // area/convexity checks) can be caught as a warning rather than silently
 // producing a warped crop full of the wrong content.
-bool quad_geometry_is_sane(const std::vector<cv::Point2f>& quad) {
+bool quad_geometry_is_sane(const std::vector<cv::Point2f>& quad, const ThresholdConfig& config) {
     if (quad.size() != 4) return false;
 
     cv::Point2f tl = quad[0], tr = quad[1], br = quad[2], bl = quad[3];
@@ -213,8 +201,7 @@ bool quad_geometry_is_sane(const std::vector<cv::Point2f>& quad) {
     // (foreshortened by the angle) relative to its opposite.
     double horiz_ratio = std::max(top, bottom) / std::min(top, bottom);
     double vert_ratio = std::max(left, right) / std::min(left, right);
-    constexpr double MAX_SIDE_RATIO = 2.2;
-    if (horiz_ratio > MAX_SIDE_RATIO || vert_ratio > MAX_SIDE_RATIO) return false;
+    if (horiz_ratio > config.max_quad_side_ratio || vert_ratio > config.max_quad_side_ratio) return false;
 
     // Interior angles of a real (even skewed) rectangle stay well clear
     // of 0/180 degrees. A near-degenerate quad (corners nearly collinear
@@ -234,10 +221,8 @@ bool quad_geometry_is_sane(const std::vector<cv::Point2f>& quad) {
         angle_deg(tr, br, bl),
         angle_deg(br, bl, tl),
     };
-    constexpr double MIN_ANGLE_DEG = 35.0;
-    constexpr double MAX_ANGLE_DEG = 145.0;
     for (double a : angles) {
-        if (a < MIN_ANGLE_DEG || a > MAX_ANGLE_DEG) return false;
+        if (a < config.min_quad_angle_deg || a > config.max_quad_angle_deg) return false;
     }
 
     return true;
@@ -467,7 +452,8 @@ OrientResult stage3_orient(
 
 cv::Mat remove_shadow(const cv::Mat& gray, float alpha) {
     int h = gray.rows, w = gray.cols;
-    int k = std::max(35, (std::min(h, w) / 6) | 1);
+    // Cap the kernel size to 51 to prevent massive CPU overhead, but keep it large enough (> bubbles)
+    int k = std::max(35, std::min(51, (std::min(h, w) / 15) | 1));
     cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(k, k));
     cv::Mat bg;
     cv::morphologyEx(gray, bg, cv::MORPH_CLOSE, kernel);
@@ -484,7 +470,8 @@ cv::Mat remove_shadow(const cv::Mat& gray, float alpha) {
 cv::Mat to_yolo_grayscale(const cv::Mat& gray, float alpha = 2.5f) {
     cv::Mat flat = remove_shadow(gray, alpha);
     cv::Mat denoised;
-    cv::bilateralFilter(flat, denoised, 7, 45, 45);
+    // Replaced expensive bilateral filter with a simpler Gaussian blur to save CPU
+    cv::GaussianBlur(flat, denoised, cv::Size(5, 5), 0);
     auto clahe = cv::createCLAHE(1.5, cv::Size(16, 16));
     cv::Mat res;
     clahe->apply(denoised, res);
@@ -538,21 +525,28 @@ cv::Mat prepare_image(const std::string& image_path) {
     return img;
 }
 
-std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_from_raw(const std::string& raw_image_path) {
+std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_from_raw(const std::string& raw_image_path, const ExamConfig& config) {
     cv::setNumThreads(4);
     cv::Mat img = cv::imread(raw_image_path);
     if (img.empty()) throw std::runtime_error("Could not load raw image: " + raw_image_path);
+
+    // Downscale early to save massive CPU cycles on 12MP+ camera photos
+    constexpr int MAX_DIM = 1500;
+    if (img.cols > MAX_DIM || img.rows > MAX_DIM) {
+        double scale = (double)MAX_DIM / std::max(img.cols, img.rows);
+        cv::resize(img, img, cv::Size(), scale, scale, cv::INTER_AREA);
+    }
 
     QualityInfo quality;
 
     // Blur check on the raw input, before any warping softens edges further.
     quality.blur_score = compute_blur_score(img);
-    if (quality.blur_score < BLUR_VARIANCE_THRESHOLD) {
+    if (quality.blur_score < config.tuning.blur_variance) {
         quality.warnings.push_back("BLUR");
         quality.is_ok = false;
     }
 
-    auto kept = find_panel_quads(img);
+    auto kept = find_panel_quads(img, config.tuning);
     quality.num_quad_candidates = (int)kept.size();
     auto quads = classify_quads(kept, img.rows, img.cols);
     auto id_quad = std::get<0>(quads);
@@ -563,7 +557,7 @@ std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_
     if (!id_quad) {
         quality.warnings.push_back("NO_ID_PANEL");
         quality.is_ok = false;
-    } else if (!quad_geometry_is_sane(*id_quad)) {
+    } else if (!quad_geometry_is_sane(*id_quad, config.tuning)) {
         // A quad WAS found (passed find_panel_quads' area/convexity
         // checks) but its geometry doesn't look like a real panel corner
         // set -- e.g. the sheet is cut off in the frame or shot at an
@@ -576,7 +570,7 @@ std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_
     if (!mcq_quad) {
         quality.warnings.push_back("NO_MCQ_PANEL");
         quality.is_ok = false;
-    } else if (!quad_geometry_is_sane(*mcq_quad)) {
+    } else if (!quad_geometry_is_sane(*mcq_quad, config.tuning)) {
         quality.warnings.push_back("MCQ_PANEL_GEOMETRY_INVALID");
         quality.is_ok = false;
     }
@@ -591,14 +585,14 @@ std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_
     // before warping. Uses the same normalized threshold as the raw check.
     if (id_warped) {
         quality.id_panel_blur_score = compute_blur_score(*id_warped);
-        if (quality.id_panel_blur_score < BLUR_VARIANCE_THRESHOLD) {
+        if (quality.id_panel_blur_score < config.tuning.blur_variance) {
             quality.warnings.push_back("ID_PANEL_BLUR");
             quality.is_ok = false;
         }
     }
     if (mcq_warped) {
         quality.mcq_panel_blur_score = compute_blur_score(*mcq_warped);
-        if (quality.mcq_panel_blur_score < BLUR_VARIANCE_THRESHOLD) {
+        if (quality.mcq_panel_blur_score < config.tuning.blur_variance) {
             quality.warnings.push_back("MCQ_PANEL_BLUR");
             quality.is_ok = false;
         }
@@ -634,9 +628,10 @@ std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_
     }
     if (total_pixels > 0) {
         double dark_ratio = (double)dark_pixels / total_pixels;
-        // Tuned to 0.075: a perfectly blank, well-exposed template has ~0.09 dark ratio.
-        // Images below 0.075 are genuinely washed out or overexposed (e.g., 22.jpeg is ~0.04).
-        if (dark_ratio < 0.075) {
+        // A perfectly well-exposed blank template with thin lines
+        // often has very few actual ink pixels across the entire page (especially after CLAHE).
+        // A ratio below the threshold indicates the page is genuinely washed out or blinded by flash.
+        if (dark_ratio < config.tuning.exposure_dark_ratio) {
             quality.warnings.push_back("EXPOSURE_TOO_HIGH");
             quality.is_ok = false;
         }

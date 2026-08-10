@@ -6,11 +6,9 @@ import '../controller/grading_review_controller.dart';
 import '../controller/submission_controller.dart';
 import '../../../domain/entities/exam_models.dart';
 import 'duplicate_resolution_dialog.dart';
-import 'widgets/annotated_image_viewer.dart';
 import 'widgets/grade_form_fields.dart';
 import 'widgets/mistakes_list.dart';
 import 'widgets/receipt_card.dart';
-import 'widgets/view_scan_buttons.dart';
 
 /// Review/edit a scanned (or manually entered) grade before submitting it.
 /// Presentation-only: all state and orchestration live in
@@ -134,6 +132,7 @@ class _GradingReviewView extends StatelessWidget {
 
     final isManual = controller.manualEntry;
     final isReceiptGenerated = controller.isReceiptGenerated;
+    final hasEssay = context.read<ConnectionController>().masterPacket?.hasEssays ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -147,12 +146,12 @@ class _GradingReviewView extends StatelessWidget {
           children: [
             GradeFormFields(
               idController: controller.idController,
-              groupTypeController: controller.groupTypeController,
               essayController: controller.essayController,
               mcqScoreController: controller.mcqScoreController,
               enabled: !isReceiptGenerated,
               isManual: isManual,
               showIdReviewWarning: scan.idNeedsReview,
+              hasEssay: hasEssay,
             ),
             const SizedBox(height: 24),
             if (!isManual) Text('MCQ Score: ${scan.mcqScore}', style: const TextStyle(fontSize: 18)),
@@ -189,15 +188,6 @@ class _GradingReviewView extends StatelessWidget {
                 total: controller.total,
                 timestamp: controller.timestamp,
               ),
-              const SizedBox(height: 16),
-              if (!isManual)
-                ViewScanButtons(
-                  annotatedIdImagePath: scan.annotatedIdImagePath,
-                  annotatedMcqImagePath: scan.annotatedMcqImagePath,
-                  needsReview: scan.needsReview,
-                  onViewId: () => AnnotatedImageViewer.show(context, path: scan.annotatedIdImagePath!, title: 'ID panel'),
-                  onViewMcq: () => AnnotatedImageViewer.show(context, path: scan.annotatedMcqImagePath!, title: 'Answer panel'),
-                ),
               const SizedBox(height: 16),
               MistakesList(mistakes: scan.mistakes),
               Row(

@@ -173,4 +173,32 @@ if(WIN32)
             "$<TARGET_FILE_DIR:ai_corrector>"
         COMMENT "Copying OpenCV runtime DLL next to ai_corrector.dll"
     )
+elseif(UNIX AND NOT ANDROID)
+    # Linux has no "copy next to the exe" convention like Windows -- instead
+    # the dynamic linker looks in rpath/runpath entries baked into the
+    # binary at link time. Without this, ai_corrector_cli (and anything
+    # that loads libai_corrector.so, e.g. via dlopen from Flutter/FFI)
+    # fails at *runtime* with "error while loading shared libraries:
+    # libonnxruntime.so: cannot open shared object file", even though the
+    # build itself succeeds, because ONNXRUNTIME_LIB_DIR isn't a standard
+    # system search path like /usr/lib.
+    #
+    # Setting BUILD_RPATH (not just INSTALL_RPATH) makes this work
+    # straight out of the build directory too, so `./ai_corrector_cli`
+    # runs without needing LD_LIBRARY_PATH set manually.
+    set_target_properties(ai_corrector PROPERTIES
+        BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}"
+        INSTALL_RPATH "${ONNXRUNTIME_LIB_DIR}"
+        BUILD_WITH_INSTALL_RPATH FALSE
+        SKIP_BUILD_RPATH FALSE
+    )
+
+    if(TARGET ai_corrector_cli)
+        set_target_properties(ai_corrector_cli PROPERTIES
+            BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}"
+            INSTALL_RPATH "${ONNXRUNTIME_LIB_DIR}"
+            BUILD_WITH_INSTALL_RPATH FALSE
+            SKIP_BUILD_RPATH FALSE
+        )
+    endif()
 endif()

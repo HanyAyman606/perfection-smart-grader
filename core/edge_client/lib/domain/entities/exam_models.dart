@@ -141,7 +141,28 @@ class MasterPacket {
   /// engine's ExamConfig::from_json (see config.h) — field names and
   /// shapes intentionally differ from the dashboard packet above because
   /// each side owns its own contract; this is the one place they meet.
-  String toExamConfigJson({required String modelPath, int rowTolerancePx = 15}) {
+  ///
+  /// The tuning* parameters mirror config.h's ThresholdConfig exactly,
+  /// defaults included — the dashboard doesn't send these today (there's
+  /// no tuning UI yet), so they default to the same values ThresholdConfig
+  /// itself falls back to when `from_json` finds no "tuning" key at all.
+  /// Passing them explicitly here means every payload the engine parses
+  /// carries a concrete tuning block regardless, rather than the C++ side
+  /// defaulting them silently — makes the actual thresholds in effect for
+  /// a given scan visible from the Dart side (e.g. for debug logging) and
+  /// gives us a single place to wire up a future tuning UI without
+  /// touching config.h's parser again.
+  String toExamConfigJson({
+    required String modelPath,
+    int rowTolerancePx = 15,
+    double tuningBlur = 15.0,
+    double tuningExposure = 0.02,
+    double tuningMinPanelAreaRatio = 0.005,
+    double tuningMaxPanelAreaRatio = 0.45,
+    double tuningMaxQuadSideRatio = 2.2,
+    double tuningMinQuadAngleDeg = 35.0,
+    double tuningMaxQuadAngleDeg = 145.0,
+  }) {
     return jsonEncode({
       'model_path': modelPath,
       'num_questions': mcqCount,
@@ -155,6 +176,17 @@ class MasterPacket {
         'num_digits': idNumDigits,
         'num_letters': idNumLetters,
         'letters': idLetters,
+      },
+      // Matches config.h's ThresholdConfig::from_json key names exactly
+      // ("blur"/"exposure", not "blur_variance"/"exposure_dark_ratio").
+      'tuning': {
+        'blur': tuningBlur,
+        'exposure': tuningExposure,
+        'min_panel_area_ratio': tuningMinPanelAreaRatio,
+        'max_panel_area_ratio': tuningMaxPanelAreaRatio,
+        'max_quad_side_ratio': tuningMaxQuadSideRatio,
+        'min_quad_angle_deg': tuningMinQuadAngleDeg,
+        'max_quad_angle_deg': tuningMaxQuadAngleDeg,
       },
     });
   }

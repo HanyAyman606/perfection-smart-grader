@@ -97,9 +97,27 @@ class GradingReviewController extends ChangeNotifier {
   }
 
   void _applyFieldsToScan() {
-    final groupTypeText = groupTypeController.text.trim();
+    final idText = idController.text.trim();
+    var groupTypeText = groupTypeController.text.trim();
+
+    // Backup plan for when the letter-column OCR read wasn't clean enough
+    // to auto-fill the group field (see cv_engine_service.dart — that
+    // field only prefills on a 100% unambiguous read, unlike the ID
+    // field which shows through partial reads). If the proctor didn't
+    // manually fill it in either, fall back to the ID's own first
+    // character — the letter column is physically the first character of
+    // the assembled ID string (see questions.cpp's assemble_id), so this
+    // is the same data, just read from the (possibly proctor-corrected)
+    // ID field instead of the raw unedited OCR result.
+    if (groupTypeText.isEmpty && idText.isNotEmpty) {
+      final firstChar = idText[0];
+      if (RegExp(r'^[A-Za-z]$').hasMatch(firstChar)) {
+        groupTypeText = firstChar;
+      }
+    }
+
     _scanController.updateCurrentScan(
-      studentId: idController.text.trim(),
+      studentId: idText,
       essayTotal: double.tryParse(essayController.text) ?? 0.0,
       groupType: groupTypeText.isEmpty ? null : groupTypeText.toUpperCase(),
     );

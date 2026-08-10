@@ -26,6 +26,16 @@ struct IDConfig {
     }
 };
 
+struct ThresholdConfig {
+    double blur_variance = 15.0;
+    double exposure_dark_ratio = 0.02;
+    double min_panel_area_ratio = 0.005;
+    double max_panel_area_ratio = 0.45;
+    double max_quad_side_ratio = 2.2;
+    double min_quad_angle_deg = 35.0;
+    double max_quad_angle_deg = 145.0;
+};
+
 struct ExamConfig {
     std::string model_path;
     int num_questions = 0;
@@ -33,6 +43,7 @@ struct ExamConfig {
     int num_question_columns = 1;
     int row_tolerance_px = 15;
     IDConfig id;
+    ThresholdConfig tuning; // Optional tuning values for testing
 
     // Authoritative per-column question counts, e.g. [9, 8, 8] for 25
     // questions in 3 columns. This reflects the actual printed template
@@ -54,8 +65,22 @@ struct ExamConfig {
 
 inline void from_json(const nlohmann::json& j, IDConfig& c) {
     if (j.contains("num_digits")) j.at("num_digits").get_to(c.num_digits);
-    if (j.contains("num_letters")) j.at("num_letters").get_to(c.num_letters);
+
+    // The Flutter frontend sends 'num_letters' to mean the number of letters in the pool (e.g., 6 for A-F).
+    // The physical layout of the paper statically has exactly 1 letter column.
+    c.num_letters = 1;
+
     if (j.contains("letters")) j.at("letters").get_to(c.letters);
+}
+
+inline void from_json(const nlohmann::json& j, ThresholdConfig& c) {
+    if (j.contains("blur")) j.at("blur").get_to(c.blur_variance);
+    if (j.contains("exposure")) j.at("exposure").get_to(c.exposure_dark_ratio);
+    if (j.contains("min_panel_area_ratio")) j.at("min_panel_area_ratio").get_to(c.min_panel_area_ratio);
+    if (j.contains("max_panel_area_ratio")) j.at("max_panel_area_ratio").get_to(c.max_panel_area_ratio);
+    if (j.contains("max_quad_side_ratio")) j.at("max_quad_side_ratio").get_to(c.max_quad_side_ratio);
+    if (j.contains("min_quad_angle_deg")) j.at("min_quad_angle_deg").get_to(c.min_quad_angle_deg);
+    if (j.contains("max_quad_angle_deg")) j.at("max_quad_angle_deg").get_to(c.max_quad_angle_deg);
 }
 
 inline void from_json(const nlohmann::json& j, ExamConfig& c) {
@@ -64,6 +89,7 @@ inline void from_json(const nlohmann::json& j, ExamConfig& c) {
     j.at("num_choices").get_to(c.num_choices);
     if (j.contains("row_tolerance_px")) j.at("row_tolerance_px").get_to(c.row_tolerance_px);
     if (j.contains("id")) j.at("id").get_to(c.id);
+    if (j.contains("tuning")) j.at("tuning").get_to(c.tuning);
 
     // Preferred path: the real wire shape sent by MasterPacket.toExamConfigJson()
     // and mirrored by project_manager.py's build_sync_packet — e.g.
@@ -85,7 +111,7 @@ inline void from_json(const nlohmann::json& j, ExamConfig& c) {
                 }
             }
         }
-        
+
         int sum = 0;
         for (int size : c.mcq_column_sizes) {
             sum += size;
