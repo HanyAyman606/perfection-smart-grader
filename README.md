@@ -1,1 +1,3 @@
-# perfection-smart-grader
+# OMR Grading System
+
+Project setup instructions.
