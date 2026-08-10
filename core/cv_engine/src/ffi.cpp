@@ -36,7 +36,7 @@ const char* step1_extract_panels(const char* image_path, const char* config_json
         ExamConfig config;
         from_json(j, config);
 
-        auto [id_final, mcq_final, quality] = preprocessing::prepare_from_raw(image_path);
+        auto [id_final, mcq_final, quality] = preprocessing::prepare_from_raw(image_path, config);
 
         nlohmann::json result;
         result["status"] = "SUCCESS";

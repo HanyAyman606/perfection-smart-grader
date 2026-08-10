@@ -5,6 +5,7 @@
 #include <tuple>
 #include <string>
 #include <vector>
+#include "config.h"
 
 namespace preprocessing {
 
@@ -56,10 +57,11 @@ cv::Mat prepare_image(const std::string& image_path);
  * entirely in memory (no intermediate files written).
  *
  * @param raw_image_path Path to the raw exam sheet photo
+ * @param config Configuration containing tuning thresholds
  * @return std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo>
  *         (id_image, mcq_image, quality)
  * @throws std::runtime_error if raw image cannot be loaded
  */
-std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_from_raw(const std::string& raw_image_path);
+std::tuple<std::optional<cv::Mat>, std::optional<cv::Mat>, QualityInfo> prepare_from_raw(const std::string& raw_image_path, const ExamConfig& config);
 
 } // namespace preprocessing
