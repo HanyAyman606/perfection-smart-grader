@@ -1,0 +1,4 @@
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/ai_corrector.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/ai_corrector_cli.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/edit_cache.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/rebuild_cache.dir

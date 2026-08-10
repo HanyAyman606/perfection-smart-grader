@@ -1,25 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../connection/controller/connection_controller.dart';
 import '../controller/scan_controller.dart';
+import 'camera_capture_screen.dart';
 import 'panel_preview_screen.dart';
 import '../../connection/presentation/connection_screen.dart';
 
-/// Entry point for capturing a student's answer sheet. Uses the phone's
-/// native camera app (via image_picker) rather than a custom Flutter
-/// camera preview — this gives full access to the OEM camera's own
-/// quality/stabilization pipeline, which is generally better than what a
-/// custom preview widget can drive directly. The tradeoff (input
-/// resolution/format varies more by OEM) is why Step 1's blur/confidence
-/// gate is load-bearing rather than optional polish — see
-/// PanelExtractionResult.mustRetake downstream.
-///
-/// No landscape lock and no live alignment heuristic here — both were
-/// artifacts of the old fixed-frame calibration approach. The C++ engine's
-/// perspective-correction + orientation-reasoning stage handles rotation,
-/// so the proctor can hold the phone however is natural.
+/// Entry point for capturing a student's answer sheet, using an in-app
+/// camera preview (CameraCaptureScreen) rather than redirecting out to
+/// the phone's native camera app. The C++ engine's perspective-correction
+/// + orientation-reasoning stage handles rotation, so the proctor can
+/// hold the phone however is natural — no landscape lock or live
+/// alignment heuristic needed here.
 class ScannerView extends StatefulWidget {
   const ScannerView({super.key});
 
@@ -35,20 +28,18 @@ class _ScannerViewState extends State<ScannerView> {
     setState(() => _isCapturing = true);
 
     try {
-      final picker = ImagePicker();
-      final photo = await picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 100, // no re-compression — full quality into Step 1
+      final imagePath = await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
       );
 
-      if (photo == null) {
-        // Proctor backed out of the native camera UI.
+      if (imagePath == null) {
+        // Proctor backed out of the camera screen.
         return;
       }
 
       if (mounted) {
         await Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => PanelPreviewScreen(rawImagePath: photo.path)),
+          MaterialPageRoute(builder: (_) => PanelPreviewScreen(rawImagePath: imagePath)),
         );
       }
     } finally {

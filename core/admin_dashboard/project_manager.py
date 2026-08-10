@@ -1,37 +1,33 @@
 """
 project_manager.py
 -------------------
-Every place the old main.py touched nexus_project.json or roster.db
-directly (create_new_project, open_existing_project, save_blueprint_to_project,
-save_template_session, refresh_group_hub, load_group_excel, open_group_detail,
-start_live_grading_session, export_group_results) now goes through this class
-instead. Benefits:
+Every place the old main.py touched nexus_project.json directly
+(create_new_project, save_blueprint_to_project, save_template_session,
+start_live_grading_session, export_group_results) now goes through this
+class instead. Benefits:
   - One place knows the on-disk layout (nexus_project.json, roster.db,
     cropped_template.jpg) — change it once, not in eight methods.
   - Pages/dashboard code reads like business logic, not file plumbing.
   - Easy to unit test without spinning up any Qt widgets.
+
+The actual `students` table SQL lives in RosterRepository and the
+`grades`/`sessions` SQL lives in GradingRepository — this class owns
+workspace lifecycle + JSON config I/O and delegates to those for
+anything SQLite, so a change to roster/grade schema doesn't require
+touching this file.
 """
 
 import os
 import json
-import sqlite3
 from admin_dashboard.recent_projects import recent_projects
 from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY, get_mode_by_id
 from admin_dashboard.group_registry import group_registry
-
+from admin_dashboard.roster_repository import RosterRepository
 
 
 CONFIG_FILENAME = "nexus_project.json"
 DB_FILENAME = "roster.db"
 MCQ_LAYOUT_COLS = 3  # bubble sheet studio always spreads MCQs across 3 columns
-
-
-STUDENTS_TABLE_SQL = """
-    CREATE TABLE IF NOT EXISTS students (
-        student_id TEXT PRIMARY KEY, student_name TEXT NOT NULL,
-        is_present INTEGER DEFAULT 1, group_name TEXT
-    )
-"""
 
 
 class ProjectManager:
@@ -79,51 +75,8 @@ class ProjectManager:
         self.project_name = data.get("project_name", "Unknown Exam")
         self.project_dir = dir_path
         recent_projects.touch(self.project_name, dir_path)
-        self._purge_orphaned_groups()
+        RosterRepository.purge_orphaned_groups(self.db_path, set(group_registry.list_groups()))
         return True
-
-    def _purge_orphaned_groups(self):
-        """Self-healing safety net: strips any roster/grade/session rows for
-        group names that no longer exist in the global registry — covers
-        workspaces that fell out of recent_projects' history (or were moved)
-        before a global delete could reach them. Mirrors
-        CrossWorkspaceGroupSync.purge_group_everywhere()'s table coverage
-        so an orphaned group can't leave grade history behind just because
-        it was cleaned up this way instead of via explicit delete."""
-        if not os.path.exists(self.db_path):
-            return
-
-        known_names = set(group_registry.list_groups())
-        conn, cursor = self._connect()
-        cursor.execute("SELECT DISTINCT group_name FROM students WHERE group_name IS NOT NULL")
-        stored_names = {row[0] for row in cursor.fetchall()}
-
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('grades', 'sessions')"
-        )
-        existing_tables = {row[0] for row in cursor.fetchall()}
-        if "sessions" in existing_tables:
-            cursor.execute("SELECT DISTINCT group_name FROM sessions WHERE group_name IS NOT NULL")
-            stored_names |= {row[0] for row in cursor.fetchall()}
-
-        orphans = stored_names - known_names
-        if not orphans:
-            conn.close()
-            return
-
-        for name in orphans:
-            cursor.execute("DELETE FROM students WHERE group_name = ?", (name,))
-            if "sessions" in existing_tables and "grades" in existing_tables:
-                cursor.execute(
-                    "DELETE FROM grades WHERE session_id IN "
-                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
-                    (name,),
-                )
-            if "sessions" in existing_tables:
-                cursor.execute("DELETE FROM sessions WHERE group_name = ?", (name,))
-
-        conn.commit()
-        conn.close()
 
     # ------------------------------------------------------------------
     # Config (blueprint / template) read-modify-write
@@ -185,26 +138,11 @@ class ProjectManager:
         )
 
     # ------------------------------------------------------------------
-    # Roster / groups (SQLite)
+    # Roster / groups (delegates to RosterRepository) + Excel export
     # ------------------------------------------------------------------
-    def _connect(self, row_factory=None):
-        conn = sqlite3.connect(self.db_path)
-        if row_factory:
-            conn.row_factory = row_factory
-        cursor = conn.cursor()
-        cursor.execute(STUDENTS_TABLE_SQL)
-        return conn, cursor
-
     def get_groups(self) -> list[tuple[str, int]]:
         """Returns [(group_name, student_count), ...] for the group hub cards."""
-        if not os.path.exists(self.db_path):
-            return []
-        conn, cursor = self._connect()
-        cursor.execute("SELECT group_name, COUNT(*) FROM students GROUP BY group_name")
-        rows = cursor.fetchall()
-        conn.close()
-        return [(name, count) for name, count in rows if name]
-
+        return RosterRepository.get_groups(self.db_path)
 
     def export_group_to_excel(self, group_name: str, save_path: str):
         import pandas as pd
@@ -218,6 +156,16 @@ class ProjectManager:
         df = df[["student_id", "group_type", "final_score"]]
         df.columns = ["Student ID", "Group Type", "Total Score"]
         df.to_excel(save_path, index=False)
+
+    def clear_group_grades(self, group_name: str) -> int:
+        """Deletes every saved grade for this group (all sessions), so the
+        next export only reflects whatever a fresh live grading session
+        produces. Returns the number of grade rows removed."""
+        from admin_dashboard.grading_repository import GradingRepository
+
+        GradingRepository.ensure_grades_schema(self.db_path)
+        return GradingRepository.delete_group_grades(self.db_path, group_name)
+
     # ------------------------------------------------------------------
     # Sync packet sent to mobile clients over the socket
     # ------------------------------------------------------------------

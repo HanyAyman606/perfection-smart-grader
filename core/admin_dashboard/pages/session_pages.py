@@ -16,7 +16,7 @@ that state through extra constructor args for no real decoupling benefit.
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QScrollArea, QListWidget, QMessageBox, QFileDialog, QStackedWidget, QDialog
+    QScrollArea, QListWidget, QFileDialog, QStackedWidget, QDialog
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -26,12 +26,11 @@ from admin_dashboard.theme import (
     TRUE_AZURE, VIVID_ROYAL, ELECTRIC_SAPPHIRE, WARN_COLOR
 )
 from admin_dashboard.pages.base import build_page_shell
-from admin_dashboard.widgets.common import StatCard, apply_card_shadow
+from admin_dashboard.widgets.common import StatCard, apply_card_shadow, ThemedButton
 from admin_dashboard.screens.payload_preview_dialog import PayloadPreviewDialog
 from admin_dashboard.group_registry import group_registry
 from admin_dashboard.screens.new_group_dialog import NewGroupDialog
-from admin_dashboard.workers.websocket_server import WebSocketServer
-from admin_dashboard.grading_repository import new_session_id
+from admin_dashboard.live_session_controller import LiveSessionController
 from admin_dashboard.cross_workspace_group_sync import CrossWorkspaceGroupSync
 from admin_dashboard.screens.session_password_dialog import SessionPasswordDialog
 from admin_dashboard.screens.dialogs import show_info, show_warning, show_error, ask_yes_no, save_file_dialog
@@ -42,7 +41,10 @@ class SessionManagerPage(QWidget):
         self.fonts = fonts
         self.project_manager = project_manager
         self.active_group_name = None
-        self.server_thread = None
+        self.live_session = LiveSessionController(project_manager)
+        self.live_session.log_message.connect(self.log_server_message)
+        self.live_session.phones_updated.connect(self._render_phones)
+        self.live_session.score_count_changed.connect(self._render_score_count)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -69,7 +71,7 @@ class SessionManagerPage(QWidget):
         If a live grading session is already running in the background,
         show a button to jump straight back into monitoring instead of
         silently dropping the admin back to the hub with no way back."""
-        is_live = self.server_thread is not None and self.server_thread.isRunning()
+        is_live = self.live_session.is_running
         self.btn_return_to_live.setVisible(is_live)
 
         self.sub_stack.setCurrentIndex(0)
@@ -82,16 +84,10 @@ class SessionManagerPage(QWidget):
         page = QWidget()
         content_layout = build_page_shell(page, "Groups & Rosters Hub", NEON_PINK, self.fonts.orbitron)
 
-        self.btn_return_to_live = QPushButton("🔴 RETURN TO LIVE SESSION")
-        self.btn_return_to_live.setFont(QFont(self.fonts.orbitron, 12, QFont.Weight.Bold))
-        self.btn_return_to_live.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_return_to_live.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {NEON_PINK}; color: #ffffff;
-                        border: none; border-radius: 10px; padding: 16px;
-                    }}
-                    QPushButton:hover {{ background-color: #d81d6f; }}
-                """)
+        self.btn_return_to_live = ThemedButton(
+            "🔴 RETURN TO LIVE SESSION", NEON_PINK, self.fonts.orbitron,
+            variant="solid", font_size=12, padding="16px", hover_bg="#d81d6f",
+        )
         self.btn_return_to_live.clicked.connect(lambda: self.sub_stack.setCurrentIndex(2))
         self.btn_return_to_live.setVisible(False)
         content_layout.addWidget(self.btn_return_to_live)
@@ -287,38 +283,33 @@ class SessionManagerPage(QWidget):
                """)
         content_layout.addWidget(self.readiness_list, stretch=1)
 
-        self.btn_export_detail = QPushButton("📊 EXPORT RESULTS")
-        self.btn_export_detail.setFont(QFont(self.fonts.orbitron, 11, QFont.Weight.Bold))
-        self.btn_export_detail.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_export_detail.setStyleSheet(
-            f"QPushButton {{ background-color: {BG_PANEL}; color: {ELECTRIC_SAPPHIRE}; "
-            f"border: 2px solid {ELECTRIC_SAPPHIRE}; border-radius: 8px; padding: 12px; }} "
-            f"QPushButton:hover {{ background-color: {ELECTRIC_SAPPHIRE}; color: #ffffff; }}"
+        detail_export_row = QHBoxLayout()
+
+        self.btn_export_detail = ThemedButton(
+            "📊 EXPORT RESULTS", ELECTRIC_SAPPHIRE, self.fonts.orbitron, font_size=11,
         )
         self.btn_export_detail.clicked.connect(self.export_group_results)
-        content_layout.addWidget(self.btn_export_detail)
+        detail_export_row.addWidget(self.btn_export_detail, stretch=1)
 
-        self.btn_set_password = QPushButton("🔒 SET PHONE SESSION PASSWORD")
-        self.btn_set_password.setFont(QFont(self.fonts.orbitron, 11, QFont.Weight.Bold))
-        self.btn_set_password.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_set_password.setStyleSheet(
-            f"QPushButton {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; "
-            f"border: 2px solid {TRUE_AZURE}; border-radius: 8px; padding: 10px; }} "
-            f"QPushButton:hover {{ background-color: {TRUE_AZURE}; color: #ffffff; }}"
+        self.btn_clear_detail = ThemedButton(
+            "🗑 CLEAR RESULTS", WARN_COLOR, self.fonts.orbitron, font_size=11,
+        )
+        self.btn_clear_detail.clicked.connect(self.clear_group_results)
+        detail_export_row.addWidget(self.btn_clear_detail, stretch=1)
+
+        content_layout.addLayout(detail_export_row)
+
+        self.btn_set_password = ThemedButton(
+            "🔒 SET PHONE SESSION PASSWORD", TRUE_AZURE, self.fonts.orbitron,
+            font_size=11, padding="10px",
         )
         self.btn_set_password.clicked.connect(self.open_session_password_dialog)
         content_layout.addWidget(self.btn_set_password)
 
-        self.btn_start_server = QPushButton("🚀 START LIVE GRADING")
-        self.btn_start_server.setFont(QFont(self.fonts.orbitron, 16, QFont.Weight.Black))
-        self.btn_start_server.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_start_server.setFixedHeight(80)
-        self.btn_start_server.setStyleSheet(
-            f"QPushButton {{ background-color: {BG_PANEL}; color: {NEON_PINK}; "
-            f"border: 3px solid {NEON_PINK}; border-radius: 12px; letter-spacing: 2px; }} "
-            f"QPushButton:hover {{ background-color: {NEON_PINK}; color: #ffffff; }} "
-            f"QPushButton:disabled {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; "
-            f"border: 3px solid {TEXT_MUTED}; }}"
+        self.btn_start_server = ThemedButton(
+            "🚀 START LIVE GRADING", NEON_PINK, self.fonts.orbitron,
+            font_size=16, weight=QFont.Weight.Black, fixed_height=80,
+            border_width=3, letter_spacing=2, support_disabled=True,
         )
         self.btn_start_server.clicked.connect(self.start_live_grading_session)
         content_layout.addWidget(self.btn_start_server)
@@ -405,31 +396,34 @@ class SessionManagerPage(QWidget):
         content_layout.addLayout(split_row)
 
         btn_row = QHBoxLayout()
-        btn_stop = QPushButton("🛑 STOP SERVER")
-        btn_stop.setFont(QFont(self.fonts.orbitron, 12, QFont.Weight.Bold))
-        btn_stop.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_stop.setStyleSheet(
-            f"QPushButton {{ background-color: {WARN_COLOR}; color: #ffffff; border-radius: 8px; padding: 15px; }}"
+        btn_stop = ThemedButton(
+            "🛑 STOP SERVER", WARN_COLOR, self.fonts.orbitron, variant="solid",
+            font_size=12, padding="15px",
         )
         btn_stop.clicked.connect(self.stop_server_and_return)
 
-        btn_export = QPushButton("📊 EXPORT RESULTS")
-        btn_export.setFont(QFont(self.fonts.orbitron, 12, QFont.Weight.Bold))
-        btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_export.setStyleSheet(
-            f"QPushButton {{ background-color: {ELECTRIC_SAPPHIRE}; color: #ffffff; border-radius: 8px; padding: 15px; }}"
+        btn_export = ThemedButton(
+            "📊 EXPORT RESULTS", ELECTRIC_SAPPHIRE, self.fonts.orbitron, variant="solid",
+            font_size=12, padding="15px",
         )
         btn_export.clicked.connect(self.export_group_results)
 
+        btn_clear = ThemedButton(
+            "🗑 CLEAR RESULTS", WARN_COLOR, self.fonts.orbitron, variant="solid",
+            font_size=12, padding="15px",
+        )
+        btn_clear.clicked.connect(self.clear_group_results)
+
         btn_row.addWidget(btn_stop)
         btn_row.addWidget(btn_export)
+        btn_row.addWidget(btn_clear)
         content_layout.addLayout(btn_row)
 
         return page
 
     def start_live_grading_session(self):
 
-        if self.server_thread is not None and self.server_thread.isRunning():
+        if self.live_session.is_running:
             show_warning(
                 self, self.fonts.orbitron, self.fonts.mono, "Session Already Running",
                 "A grading session is already live. Stop it from the monitoring "
@@ -452,22 +446,8 @@ class SessionManagerPage(QWidget):
             if preview.exec() != QDialog.DialogCode.Accepted:
                 return
 
-            self.server_thread = WebSocketServer(
-                packet_data=master_packet,
-                db_path=self.project_manager.db_path,
-                session_id=new_session_id(),
-                group_name=self.active_group_name,
-                session_password=self.project_manager.get_session_password(),
-            )
-            self.server_thread.log_signal.connect(self.log_server_message)
-            self.server_thread.phone_connected.connect(self._on_phone_status_changed)
-            self.server_thread.phone_disconnected.connect(self._on_phone_status_changed)
-            self.server_thread.score_saved.connect(self._on_score_saved)
-            self.server_thread.score_removed.connect(self._on_score_removed)
-            self.server_thread.start()
+            self.live_session.start(self.active_group_name, master_packet)
 
-            self._scores_saved_count = 0
-            self.card_scores_saved.update_value("0")
             self.monitor_log.clear()
             self.phones_list.clear()
             self.sub_stack.setCurrentIndex(2)
@@ -479,28 +459,17 @@ class SessionManagerPage(QWidget):
         self.monitor_log.addItem(message)
         self.monitor_log.scrollToItem(self.monitor_log.item(self.monitor_log.count() - 1))
 
-    def _on_phone_status_changed(self, _phone_name):
-        """Connected/disconnected both just mean 'redraw from the source
-        of truth' — WebSocketServer.get_connected_phones_snapshot() is
-        cheap and always correct, so no need to hand-patch list items."""
+    def _render_phones(self, phones_snapshot):
         self.phones_list.clear()
-        for phone in self.server_thread.get_connected_phones_snapshot():
+        for phone in phones_snapshot:
             status_icon = "🟢" if phone["status"] == "connected" else "⚪"
             self.phones_list.addItem(f"{status_icon} {phone['name']} — {phone['scan_count']} scanned")
 
-    def _on_score_saved(self, _student_id, _score):
-        self._scores_saved_count += 1
-        self.card_scores_saved.update_value(str(self._scores_saved_count))
-
-    def _on_score_removed(self, _student_id):
-        self._scores_saved_count = max(0, self._scores_saved_count - 1)
-        self.card_scores_saved.update_value(str(self._scores_saved_count))
+    def _render_score_count(self, count):
+        self.card_scores_saved.update_value(str(count))
 
     def stop_server_and_return(self):
-        if self.server_thread is not None and self.server_thread.isRunning():
-            self.server_thread.stop()
-            self.server_thread.wait()
-
+        self.live_session.stop()
         self.btn_return_to_live.setVisible(False)
         self.refresh_group_hub()
         self.sub_stack.setCurrentIndex(0)
@@ -520,3 +489,31 @@ class SessionManagerPage(QWidget):
                       f"Results successfully exported to:\n{save_path}")
         except Exception as e:
             show_error(self, self.fonts.orbitron, self.fonts.mono, "Export Error", str(e))
+
+    def clear_group_results(self):
+        """Deletes every saved grade for the active group (all sessions,
+        not just the most recent one) — for when you only want the next
+        export to reflect a fresh live grading session. Destructive and
+        irreversible, so it's gated behind an explicit warning + confirm
+        instead of living on the same button as the (safe) export."""
+        if not self.active_group_name or not self.project_manager.is_active:
+            return
+
+        confirmed = ask_yes_no(
+            self, self.fonts.orbitron, self.fonts.mono, "⚠ Clear All Results?",
+            f"This will permanently delete ALL saved grades for "
+            f"\"{self.active_group_name}\" — from every past live grading "
+            f"session, not just the most recent one.\n\n"
+            f"This cannot be undone. Export a backup first if you're not sure.\n\n"
+            f"Continue?"
+        )
+        if not confirmed:
+            return
+
+        try:
+            deleted = self.project_manager.clear_group_grades(self.active_group_name)
+            self.live_session.reset_score_count()
+            show_info(self, self.fonts.orbitron, self.fonts.mono, "Cleared",
+                      f"Removed {deleted} saved grade(s) for \"{self.active_group_name}\".")
+        except Exception as e:
+            show_error(self, self.fonts.orbitron, self.fonts.mono, "Clear Error", str(e))

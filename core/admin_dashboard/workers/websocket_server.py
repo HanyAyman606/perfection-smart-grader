@@ -263,41 +263,67 @@ class WebSocketServer(QThread):
 
     async def _handle_submit_score(self, websocket, phone_name: str, msg: dict):
         student_id = msg.get("student_id")
-        existing = self.repo.get_existing_grade(student_id)
+        # The phone correlates a response to the request that triggered it
+        # purely by this field (see WebSocketClient.submitScoreAndAwait on
+        # the client) — every score_result we send back MUST echo it, or
+        # the phone's completer never resolves and it times out even
+        # though we saved successfully.
+        request_id = msg.get("request_id")
 
-        if existing is not None:
+        try:
+            existing = self.repo.get_existing_grade(student_id)
+
+            if existing is not None:
+                await websocket.send(json.dumps({
+                    "type": "score_result",
+                    "status": "duplicate",
+                    "student_id": student_id,
+                    "request_id": request_id,
+                    "previous": {
+                        "score": existing["score"],
+                        "answer_version": existing["answer_version"],
+                        "timestamp": existing["timestamp"],
+                    },
+                    "incoming": {
+                        "score": msg.get("total_score"),
+                        "answer_version": msg.get("answer_version"),
+                        "timestamp": msg.get("timestamp"),
+                    },
+                }))
+                return
+
+            self.repo.save_grade(
+                student_id=student_id,
+                mcq_score=msg.get("mcq_score", 0.0),
+                essay_total=msg.get("essay_total", 0.0),
+                total_score=msg.get("total_score", 0.0),
+                mistakes=msg.get("mistakes", []),
+                answer_version=msg.get("answer_version"),
+                group_type=msg.get("group_type"),
+            )
+        except Exception as e:
+            # Without this, an exception here (locked DB, bad payload,
+            # etc.) kills the coroutine silently: no score_result is ever
+            # sent, and the phone's submitScoreAndAwait just sits there
+            # until its own 10s timeout fires and shows a misleading
+            # "network timeout" error. Always answer back.
+            self.log_signal.emit(f"SUBMIT ERROR: {student_id} via {phone_name} -> {e}")
             await websocket.send(json.dumps({
                 "type": "score_result",
-                "status": "duplicate",
+                "status": "error",
                 "student_id": student_id,
-                "previous": {
-                    "score": existing["score"],
-                    "answer_version": existing["answer_version"],
-                    "timestamp": existing["timestamp"],
-                },
-                "incoming": {
-                    "score": msg.get("total_score"),
-                    "answer_version": msg.get("answer_version"),
-                    "timestamp": msg.get("timestamp"),
-                },
+                "request_id": request_id,
+                "message": f"Server failed to save grade: {e}",
             }))
             return
 
-        self.repo.save_grade(
-            student_id=student_id,
-            mcq_score=msg.get("mcq_score", 0.0),
-            essay_total=msg.get("essay_total", 0.0),
-            total_score=msg.get("total_score", 0.0),
-            mistakes=msg.get("mistakes", []),
-            answer_version=msg.get("answer_version"),
-            group_type=msg.get("group_type"),
-        )
         self._bump_scan_count(phone_name)
 
         await websocket.send(json.dumps({
             "type": "score_result",
             "status": "success",
             "student_id": student_id,
+            "request_id": request_id,
             "message": "Grade saved successfully.",
         }))
         self.log_signal.emit(f"SAVED: {student_id} ({msg.get('total_score')} pts) via {phone_name}")
@@ -306,31 +332,46 @@ class WebSocketServer(QThread):
     async def _handle_resolve_duplicate(self, websocket, phone_name: str, msg: dict):
         student_id = msg.get("student_id")
         action = msg.get("action")
+        request_id = msg.get("request_id")  # must be echoed back — see _handle_submit_score
 
-        if action == "overwrite":
-            payload = msg.get("new_score_payload") or {}
-            self.repo.overwrite_grade(
-                student_id=student_id,
-                mcq_score=payload.get("mcq_score", 0.0),
-                essay_total=payload.get("essay_total", 0.0),
-                total_score=payload.get("total_score", 0.0),
-                mistakes=payload.get("mistakes", []),
-                answer_version=payload.get("answer_version"),
-                group_type=payload.get("group_type"),
-            )
-            self._bump_scan_count(phone_name)
-            self.score_saved.emit(student_id, float(payload.get("total_score", 0.0)))
+        try:
+            if action == "overwrite":
+                payload = msg.get("new_score_payload") or {}
+                self.repo.overwrite_grade(
+                    student_id=student_id,
+                    mcq_score=payload.get("mcq_score", 0.0),
+                    essay_total=payload.get("essay_total", 0.0),
+                    total_score=payload.get("total_score", 0.0),
+                    mistakes=payload.get("mistakes", []),
+                    answer_version=payload.get("answer_version"),
+                    group_type=payload.get("group_type"),
+                )
+                self._bump_scan_count(phone_name)
+                self.score_saved.emit(student_id, float(payload.get("total_score", 0.0)))
 
-        elif action == "discard_both":
-            self.repo.discard_grade(student_id)
-            self.score_removed.emit(student_id)
+            elif action == "discard_both":
+                self.repo.discard_grade(student_id)
+                self.score_removed.emit(student_id)
 
-            # "keep_previous" -> no DB action.
+                # "keep_previous" -> no DB action.
+        except Exception as e:
+            # Same reasoning as _handle_submit_score: always answer back
+            # so resolveDuplicateAndAwait on the phone doesn't just time out.
+            self.log_signal.emit(f"RESOLVE ERROR: {student_id} -> {action} via {phone_name} -> {e}")
+            await websocket.send(json.dumps({
+                "type": "resolve_duplicate_result",
+                "status": "error",
+                "student_id": student_id,
+                "request_id": request_id,
+                "message": f"Server failed to resolve duplicate: {e}",
+            }))
+            return
 
         await websocket.send(json.dumps({
             "type": "resolve_duplicate_result",
             "status": "success",
             "student_id": student_id,
+            "request_id": request_id,
             "action_taken": action,
         }))
         self.log_signal.emit(f"DUPLICATE RESOLVED: {student_id} -> {action} (by {phone_name})")

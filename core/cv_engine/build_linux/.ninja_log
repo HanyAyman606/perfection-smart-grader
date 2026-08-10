@@ -1,0 +1,9 @@
+# ninja log v5
+1	2511	1786335025893949839	CMakeFiles/ai_corrector.dir/src/grouping.cpp.o	62036faca9b18d72
+1	4418	1786335027800972325	CMakeFiles/ai_corrector.dir/src/preprocessing.cpp.o	ef1c43640254554a
+8	4572	1786335027954974141	CMakeFiles/ai_corrector_cli.dir/src/main.cpp.o	79b19fbdfaacb1e7
+2	6007	1786335029389991061	CMakeFiles/ai_corrector.dir/src/questions.cpp.o	2e5ca8f2c8170705
+2	6190	1786335029572993218	CMakeFiles/ai_corrector.dir/src/inference.cpp.o	e2773153779eb9eb
+7	9250	1786335032633029299	CMakeFiles/ai_corrector.dir/src/ffi.cpp.o	479ed00be9185b49
+9250	9347	1786335032729030431	libai_corrector.so	fbe52b36389b206c
+9347	9736	1786335033114034970	ai_corrector_cli	f58dda43f5dd8be3

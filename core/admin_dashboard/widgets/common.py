@@ -80,6 +80,68 @@ class NavButton(QPushButton):
         self.setStyleSheet(self._active_style if active else self._base_style)
 
 
+class ThemedButton(QPushButton):
+    """Shared button styling so the two visual patterns repeated across
+    every page/dialog (see pages/session_pages.py, screens/dialogs.py,
+    etc.) live in exactly one place:
+
+      - "outline" — transparent/BG_PANEL fill with a colored border and
+        text, inverting to a solid fill on hover. Used for most secondary
+        actions (Export, Clear, Set Password, Start Grading...).
+      - "solid" — a flat colored fill with white text, no border. Used
+        for buttons that are already the "primary" action on their screen
+        (Stop Server, Return To Live Session...).
+
+    Before this existed, each call site copy-pasted its own
+    `QPushButton {{ ... }}` block, which meant a single visual tweak
+    (padding, radius, hover behavior) had to be repeated by hand in
+    dozens of places. Centralizing it here means new buttons opt into
+    the current look automatically, and the look can change in one spot.
+    """
+
+    def __init__(self, text, color, orbitron_family, *, variant="outline",
+                 font_size=11, weight=QFont.Weight.Bold, padding="12px",
+                 fixed_height=None, border_width=2, letter_spacing=None,
+                 hover_bg=None, support_disabled=False, parent=None):
+        super().__init__(text, parent)
+        self.setFont(QFont(orbitron_family, font_size, weight))
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if fixed_height:
+            self.setFixedHeight(fixed_height)
+
+        spacing_rule = f"letter-spacing: {letter_spacing}px;" if letter_spacing else ""
+
+        if variant == "outline":
+            style = f"""
+                QPushButton {{
+                    background-color: {BG_PANEL}; color: {color};
+                    border: {border_width}px solid {color}; border-radius: 8px;
+                    padding: {padding}; {spacing_rule}
+                }}
+                QPushButton:hover {{ background-color: {color}; color: #ffffff; }}
+            """
+            if support_disabled:
+                style += f"""
+                    QPushButton:disabled {{
+                        background-color: {BG_PANEL}; color: {TEXT_MUTED};
+                        border: {border_width}px solid {TEXT_MUTED};
+                    }}
+                """
+        elif variant == "solid":
+            hover_rule = f"QPushButton:hover {{ background-color: {hover_bg}; }}" if hover_bg else ""
+            style = f"""
+                QPushButton {{
+                    background-color: {color}; color: #ffffff;
+                    border: none; border-radius: 8px; padding: {padding}; {spacing_rule}
+                }}
+                {hover_rule}
+            """
+        else:
+            raise ValueError(f"ThemedButton: unknown variant {variant!r} (expected 'outline' or 'solid')")
+
+        self.setStyleSheet(style)
+
+
 class StatCard(QFrame):
     def __init__(self, title, value, accent_hex, orbitron, mono, subtitle=""):
         super().__init__()

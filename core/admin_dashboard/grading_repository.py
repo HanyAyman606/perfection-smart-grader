@@ -176,31 +176,6 @@ class GradingRepository:
 
     @staticmethod
     def get_group_grades(db_path: str, group_name: str) -> list[dict]:
-        """Every grade ever saved for this group, across all sessions —
-        used by the Excel export. Ordered by answer_version first (so
-        M's/N's/C's group together in the sheet), then student_id."""
-        conn = sqlite3.connect(db_path)
-        cursor = conn.execute(
-            "SELECT g.student_id, g.mcq_score, g.essay_total, g.final_score, "
-            "g.answer_version, g.timestamp "
-            "FROM grades g JOIN sessions s ON g.session_id = s.session_id "
-            "WHERE s.group_name = ? "
-            "ORDER BY g.answer_version, g.student_id",
-            (group_name,),
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [
-            {
-                "student_id": r[0], "mcq_score": r[1], "essay_total": r[2],
-                "final_score": r[3], "answer_version": r[4], "timestamp": r[5],
-            }
-            for r in rows
-        ]
-
-
-    @staticmethod
-    def get_group_grades(db_path: str, group_name: str) -> list[dict]:
         """Every grade ever saved for this group's sessions, sorted by
         group_type first (M's together, then N's, then W's...) since
         one grading session's location can contain students from several
@@ -224,6 +199,24 @@ class GradingRepository:
             }
             for r in rows
         ]
+
+    @staticmethod
+    def delete_group_grades(db_path: str, group_name: str) -> int:
+        """Wipes every grade ever saved for this group, across all its
+        sessions — the DB-level counterpart to a fresh Excel export
+        containing only whatever a *new* live grading session produces.
+        Leaves the sessions/students rows themselves alone; only the
+        grades rows are removed. Returns the number of rows deleted."""
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute(
+            "DELETE FROM grades WHERE session_id IN "
+            "(SELECT session_id FROM sessions WHERE group_name = ?)",
+            (group_name,),
+        )
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
 
     def get_session_grades(self) -> list[dict]:
         """Used by export_group_results / a future results view — every
