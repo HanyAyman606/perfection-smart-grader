@@ -45,6 +45,7 @@ class SessionManagerPage(QWidget):
         self.live_session.log_message.connect(self.log_server_message)
         self.live_session.phones_updated.connect(self._render_phones)
         self.live_session.score_count_changed.connect(self._render_score_count)
+        self.live_session.session_start_failed.connect(self._on_session_start_failed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -448,12 +449,28 @@ class SessionManagerPage(QWidget):
 
             self.live_session.start(self.active_group_name, master_packet)
 
+            # start() can fail without raising (e.g. cv_engine .so/.dll or
+            # bubble.onnx missing) — it reports that via
+            # session_start_failed instead, so only advance to the
+            # monitoring screen once we know the server actually came up.
+            if not self.live_session.is_running:
+                return
+
             self.monitor_log.clear()
             self.phones_list.clear()
             self.sub_stack.setCurrentIndex(2)
 
         except Exception as e:
             show_error(self, self.fonts.orbitron, self.fonts.mono, "Initialization Error", str(e))
+
+    def _on_session_start_failed(self, reason: str):
+        show_error(
+            self, self.fonts.orbitron, self.fonts.mono, "Grading Engine Failed To Load",
+            "The live session could not start because the on-device grading "
+            "engine failed to load:\n\n" + reason +
+            "\n\nCheck that cv_engine_bin/ contains the compiled engine "
+            "library and bubble.onnx for this platform."
+        )
 
     def log_server_message(self, message):
         self.monitor_log.addItem(message)

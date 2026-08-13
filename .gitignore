@@ -35,6 +35,21 @@ env/
 # Exported result sheets
 *_Results.xlsx
 
+# Local manual-smoke-test config (see admin_dashboard/tests/README.md) —
+# values are documented in manual_smoke_test.py's docstring, not source.
+sample_config.json
+
+# CV engine deploy artifacts staged into cv_engine_bin/ for manual testing —
+# rebuilt/recopied from cv_engine/build_*/ and cv_engine/models/, not source.
+**/admin_dashboard/cv_engine_bin/*.onnx
+**/admin_dashboard/cv_engine_bin/*.jpg
+
+# Crop/annotation images written by ai_corrector_cli / manual_smoke_test.py
+# next to whatever sample image was passed in.
+*_cropped_id.jpg
+*_cropped_mcq.jpg
+*_annotated.jpg
+
 
 ### === Flutter / Dart (edge_client mobile) === ###
 .dart_tool/
@@ -106,7 +121,8 @@ coverage/
 # NOTE: renamed from omr_engine -> cv_engine; kept both prefixes in case
 # any legacy omr_engine/ folder still exists in a working tree.
 **/*.xcframework
-cv_engine/build/
+# Matches cv_engine/build_linux/, build_windows/, build_macos/, etc.
+cv_engine/build*/
 cv_engine/**/*.o
 cv_engine/**/*.dll
 cv_engine/**/*.dylib

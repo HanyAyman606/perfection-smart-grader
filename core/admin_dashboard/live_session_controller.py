@@ -7,6 +7,16 @@ connect/disconnect, score saved/removed, log lines) into the two pieces
 of state a UI actually needs to render — a phone-status snapshot and a
 running "scores saved" count.
 
+ARCHITECTURE CHANGE: this is also now where the CVEngineBridge gets
+built — once per "Start Live Grading" click, not once per phone. The
+same instance (and its already-warmed ONNX session) is handed to
+WebSocketServer, which shares it read-only across its thread pool. If
+the engine fails to load (missing .so/.dll, bubble.onnx, or the warmup
+sample image), start() does NOT raise — it emits session_start_failed
+instead and returns, so the caller (SessionManagerPage) can show a
+clear dialog rather than the session silently half-starting or a raw
+exception surfacing.
+
 This used to live directly inside SessionManagerPage (a QWidget also
 responsible for building three whole screens of layout). Pulling it out
 means the Live Monitoring screen's widgets don't need to know anything
@@ -21,6 +31,9 @@ from PySide6.QtCore import QObject, Signal
 
 from admin_dashboard.workers.websocket_server import WebSocketServer
 from admin_dashboard.grading_repository import new_session_id, GradingRepository
+from admin_dashboard.cv_engine_bridge import (
+    CVEngineBridge, CVEngineError, default_lib_path, default_model_path, default_warmup_image_path,
+)
 
 
 class LiveSessionController(QObject):
@@ -29,11 +42,13 @@ class LiveSessionController(QObject):
     score_count_changed = Signal(int)
     session_started = Signal()
     session_stopped = Signal()
+    session_start_failed = Signal(str)  # human-readable reason — e.g. cv_engine failed to load
 
     def __init__(self, project_manager):
         super().__init__()
         self.project_manager = project_manager
         self.server_thread: WebSocketServer | None = None
+        self.cv_engine: CVEngineBridge | None = None
         self._scores_saved_count = 0
 
     @property
@@ -47,15 +62,32 @@ class LiveSessionController(QObject):
     def start(self, group_name: str, master_packet: dict):
         """Raises RuntimeError if a session is already running — the
         caller is expected to check `is_running` first for a friendlier
-        message, but this guards the invariant either way."""
+        message, but this guards the invariant either way.
+
+        Also emits session_start_failed (instead of raising) if the
+        cv_engine can't be loaded, since that's an environment problem
+        (missing binary/model file) the proctor should see as a clear
+        message, not a stack trace."""
         if self.is_running:
             raise RuntimeError("A grading session is already live.")
+
+        try:
+            self.cv_engine = CVEngineBridge(
+                lib_path=default_lib_path(),
+                model_path=default_model_path(),
+                warmup_image_path=default_warmup_image_path(),
+            )
+        except CVEngineError as e:
+            self.log_message.emit(f"CV ENGINE LOAD FAILED: {e}")
+            self.session_start_failed.emit(str(e))
+            return
 
         self.server_thread = WebSocketServer(
             packet_data=master_packet,
             db_path=self.project_manager.db_path,
             session_id=new_session_id(),
             group_name=group_name,
+            cv_engine=self.cv_engine,
             session_password=self.project_manager.get_session_password(),
         )
         self.server_thread.log_signal.connect(self.log_message.emit)
@@ -68,7 +100,7 @@ class LiveSessionController(QObject):
         GradingRepository.ensure_grades_schema(self.project_manager.db_path)
         existing_grades = GradingRepository.get_group_grades(self.project_manager.db_path, group_name)
         self._scores_saved_count = len(existing_grades)
-        
+
         self.score_count_changed.emit(self._scores_saved_count)
         self.session_started.emit()
 
@@ -76,6 +108,7 @@ class LiveSessionController(QObject):
         if self.is_running:
             self.server_thread.stop()
             self.server_thread.wait()
+        self.cv_engine = None
         self.session_stopped.emit()
 
     def reset_score_count(self):

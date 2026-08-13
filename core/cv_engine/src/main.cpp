@@ -1,3 +1,25 @@
+// main.cpp — CLI smoke-test tool for the desktop build.
+//
+// REPLACES the previous main.cpp, which called step1_extract_panels()
+// and step2_infer_and_score() — those matched an older two-call API
+// documented in README.md/API_DOCUMENTATION.md, but the engine was
+// refactored to the single process_exam_in_memory() call declared in
+// ffi.h. The old main.cpp does not compile against the current ffi.h
+// (undeclared functions) — this file replaces it with the corrected
+// equivalent, using the actual current API.
+//
+// Usage: ai_corrector_cli <image_path> <config_json_path>
+//   config_json_path points at a JSON file, e.g.:
+//     {
+//       "model_path": "/path/to/bubble.onnx",
+//       "num_questions": 5,
+//       "num_choices": 4,
+//       "mcq_columns": {"num_cols": 1, "columns": {"1": 5}},
+//       "id": {"num_digits": 4, "num_letters": 6, "letters": ["C","D","E","F","M","W"]}
+//     }
+//   (mcq_columns.columns must sum to exactly num_questions, or the
+//   engine returns status: "ERROR" — see config.h's from_json.)
+
 #include "ffi.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -6,7 +28,7 @@
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <image_path> <config_json>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <image_path> <config_json_path>" << std::endl;
         return 1;
     }
 
@@ -14,44 +36,30 @@ int main(int argc, char** argv) {
     std::string config_json_path = argv[2];
 
     std::ifstream t(config_json_path);
+    if (!t) {
+        std::cerr << "Could not open config file: " << config_json_path << std::endl;
+        return 1;
+    }
     std::stringstream buffer;
     buffer << t.rdbuf();
     std::string config_json_str = buffer.str();
 
-    // Step 1: Extract panels
-    const char* step1_res_cstr = step1_extract_panels(image_path.c_str(), config_json_str.c_str());
-    if (!step1_res_cstr) {
-        std::cerr << "Error: step1_extract_panels returned null" << std::endl;
+    const char* result_cstr = process_exam_in_memory(image_path.c_str(), config_json_str.c_str());
+    if (!result_cstr) {
+        std::cerr << "Error: process_exam_in_memory returned null" << std::endl;
         return 1;
     }
 
-    std::string step1_res = step1_res_cstr;
-    free_string(const_cast<char*>(step1_res_cstr));
+    std::string result = result_cstr;
+    free_string(const_cast<char*>(result_cstr));
 
-    nlohmann::json s1_json = nlohmann::json::parse(step1_res);
-    if (s1_json["status"] != "SUCCESS") {
-        std::cerr << "Step 1 Failed: " << step1_res << std::endl;
+    std::cout << result << std::endl;
+
+    try {
+        nlohmann::json parsed = nlohmann::json::parse(result);
+        std::string status = parsed.value("status", "");
+        return (status == "SUCCESS") ? 0 : 1;
+    } catch (...) {
         return 1;
     }
-
-    std::string id_path = s1_json.contains("id_panel_path") ? s1_json["id_panel_path"].get<std::string>() : "";
-    std::string mcq_path = s1_json.contains("mcq_panel_path") ? s1_json["mcq_panel_path"].get<std::string>() : "";
-
-    std::cout << "--- Step 1 Success ---" << std::endl;
-    std::cout << step1_res << std::endl;
-
-    // Step 2: Infer and score
-    const char* step2_res_cstr = step2_infer_and_score(id_path.c_str(), mcq_path.c_str(), config_json_str.c_str());
-    if (!step2_res_cstr) {
-        std::cerr << "Error: step2_infer_and_score returned null" << std::endl;
-        return 1;
-    }
-
-    std::string step2_res = step2_res_cstr;
-    free_string(const_cast<char*>(step2_res_cstr));
-
-    std::cout << "--- Step 2 Success ---" << std::endl;
-    std::cout << step2_res << std::endl;
-
-    return 0;
 }
