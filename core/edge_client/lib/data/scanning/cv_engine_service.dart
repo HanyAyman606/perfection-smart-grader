@@ -1,7 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
 import '../../domain/entities/exam_models.dart';
 import '../../domain/repositories/scan_engine_repository.dart';
 import 'native_cv_bindings.dart';
@@ -22,7 +20,7 @@ class CvEngineException implements Exception {
 ///
 /// On a bad-quality scan (BLUR, NO_ID_PANEL, …) the engine short-circuits
 /// before inference and returns confidence=LOW with warnings but no
-/// grading data. mustRetake drives the Dart retake-or-continue branch.
+/// grading data.
 class ProcessExamResult {
   final bool success;
   final bool isOk; // confidence == "OK"
@@ -93,43 +91,33 @@ class CvEngineService implements ScanEngineRepository {
 
   final LogRepository _log;
 
-  /// Fixes EXIF rotation by physically rotating pixels and stripping EXIF
-  /// orientation, so the C++ side (which reads raw pixel buffers via
-  /// OpenCV, not EXIF-aware) sees the photo right-side-up exactly as
-  /// captured. Must run before the engine call, not just before display.
-  Future<String> fixExifOrientation(String originalPath) async {
-    final bytes = await File(originalPath).readAsBytes();
-    final image = img.decodeJpg(bytes);
-    if (image == null) return originalPath;
-
-    final orientedImage = img.bakeOrientation(image);
-    orientedImage.exif.clear();
-
-    final fixedBytes = img.encodeJpg(orientedImage);
-    final newPath = originalPath.replaceAll('.jpg', '_oriented.jpg');
-    await File(newPath).writeAsBytes(fixedBytes);
-    return newPath;
-  }
-
   /// Single-step pipeline: perspective-correct + crop panels + YOLO
   /// inference + scoring, all in one native call off the UI isolate.
-  ///
-  /// Returns a [ProcessExamResult] containing both the quality signal and
-  /// the full grading payload. The caller checks [mustRetake] to decide
-  /// whether to show an error screen or go straight to grading review.
   @override
   Future<ProcessExamResult> extractPanels({
     required String rawImagePath,
     required String modelPath,
     required MasterPacket masterPacket,
   }) async {
-    final orientedPath = await fixExifOrientation(rawImagePath);
+    final overallSw = Stopwatch()..start();
+
     final configJson = masterPacket.toExamConfigJson(modelPath: modelPath);
     _log.log('CvEngineService', 'processExam config: $configJson');
 
-    final resultJson = await compute(_runProcessExam, _ProcessExamArgs(orientedPath, configJson));
+    final computeSw = Stopwatch()..start();
+    // Directly passing rawImagePath to the native engine.
+    // OpenCV's cv::imread automatically reads EXIF and handles orientation in C++.
+    final resultJson = await compute(_runProcessExam, _ProcessExamArgs(rawImagePath, configJson));
+    final computeMs = computeSw.elapsedMilliseconds;
+
     _log.log('CvEngineService', 'processExam result: $resultJson');
     final parsed = jsonDecode(resultJson) as Map<String, dynamic>;
+
+    overallSw.stop();
+    final nativeReportedMs = (parsed['timing_ms'] as Map?)?['total_ms'];
+    _log.log('CvEngineService',
+        'extractPanels timing_ms: compute_call=$computeMs '
+        '(native_reported_total=$nativeReportedMs) dart_side_total=${overallSw.elapsedMilliseconds}');
 
     if (parsed['status'] == 'ERROR') {
       throw CvEngineException(parsed['message'] as String? ?? 'Unknown CV engine error');
@@ -139,7 +127,6 @@ class CvEngineService implements ScanEngineRepository {
   }
 
   /// Builds a [GradeResult] from a successful [ProcessExamResult].
-  /// Called by panel_preview_screen after a clean quality check.
   @override
   Future<GradeResult> inferAndScore({
     required String idPanelPath,
@@ -149,9 +136,6 @@ class CvEngineService implements ScanEngineRepository {
     required String selectedVersion,
     String? rawImagePath,
   }) {
-    // This method is kept to satisfy the ScanEngineRepository interface.
-    // The actual work is done inside extractPanels() via process_exam_in_memory.
-    // panel_preview_screen.dart now calls buildGradeResult() directly instead.
     throw UnimplementedError('Use buildGradeResult() with the ProcessExamResult from extractPanels().');
   }
 
@@ -210,10 +194,6 @@ class CvEngineService implements ScanEngineRepository {
   }
 }
 
-// Top-level functions required by compute() — must be static/top-level,
-// not instance methods, since they run in a separate isolate with no
-// access to `this`.
-
 class _ProcessExamArgs {
   final String imagePath;
   final String configJson;
@@ -221,7 +201,5 @@ class _ProcessExamArgs {
 }
 
 String _runProcessExam(_ProcessExamArgs args) {
-  // Runs in a background isolate spawned by compute() — must get its own
-  // binding, see NativeCvBindings.forCurrentIsolate().
   return NativeCvBindings.forCurrentIsolate().callProcessExam(args.imagePath, args.configJson);
 }

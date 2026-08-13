@@ -25,6 +25,20 @@ from admin_dashboard.screens.dialogs import show_warning, show_info
 class SetupPage(QWidget):
     DEFAULT_LETTERS = "CDEFMW"
 
+    # Shamel mode's fixed exam shape — spawned the moment the admin picks
+    # "Shamel Mode" from the dropdown, so they don't have to hand-build
+    # the same 44-question / 2-essay blueprint every time. Still fully
+    # editable afterward; this is just a starting point, not a lock.
+    SHAMEL_MCQ_COUNT = 44
+    SHAMEL_MCQ_RANGES = [
+        {"start": 1, "end": 32, "points": 1.0},
+        {"start": 33, "end": 44, "points": 2.0},
+    ]
+    SHAMEL_ESSAY_COUNT = 2
+    SHAMEL_ESSAY_POINTS = 2.0
+    SHAMEL_ID_LETTER_COUNT = 7
+    SHAMEL_ID_LETTERS = "CDEFMWO"  # DEFAULT_LETTERS + 'O' as the 7th letter
+
     def __init__(self, fonts, project_manager):
         super().__init__()
         self.fonts = fonts
@@ -50,6 +64,7 @@ class SetupPage(QWidget):
             next(i for i, m in enumerate(EXAM_MODES) if m.id == DEFAULT_MODE_ID)
         )
         self.exam_mode_combo.setStyleSheet(INPUT_STYLE)
+        self.exam_mode_combo.currentIndexChanged.connect(self._on_exam_mode_changed)
 
         self.mcq_count_spin = QSpinBox()
         self.mcq_count_spin.setRange(1, 150)
@@ -205,6 +220,53 @@ class SetupPage(QWidget):
     def _on_mcq_count_changed(self, value):
         self.range_builder.set_total_questions(value)
 
+    def _on_exam_mode_changed(self, index: int):
+        """Fires only on a genuine user pick from the dropdown — never
+        during load_blueprint(), which blocks this combo's signals while
+        it sets the saved mode. Populating defaults here (rather than
+        reacting to config load) is what makes them 'spawn immediately'
+        on selection without ever silently overwriting a reopened,
+        previously-saved blueprint."""
+        mode_id = self.exam_mode_combo.itemData(index)
+        if mode_id == "shamel":
+            self._apply_shamel_defaults()
+
+    def _apply_shamel_defaults(self):
+        """The fixed Shamel-mode shape: 44 MCQs (1-32 worth 1pt, 33-44
+        worth 2pts), 2 essay questions worth 2pts each, and a 7-letter
+        ID group column ending in 'O'. Everything set here stays a
+        normal editable field afterward — this only seeds the starting
+        values."""
+        # -- MCQ count + ranges --
+        self.mcq_count_spin.blockSignals(True)
+        self.mcq_count_spin.setValue(self.SHAMEL_MCQ_COUNT)
+        self.mcq_count_spin.blockSignals(False)
+        self.range_builder.load_ranges(self.SHAMEL_MCQ_COUNT, self.SHAMEL_MCQ_RANGES)
+
+        # -- Essays --
+        self.essay_checkbox.blockSignals(True)
+        self.essay_checkbox.setChecked(True)
+        self.essay_checkbox.blockSignals(False)
+        self.essay_count_lbl.setVisible(True)
+        self.essay_count_spin.setVisible(True)
+        self.essay_count_spin.setEnabled(True)
+        self.essay_scroll.setVisible(True)
+
+        self.essay_count_spin.blockSignals(True)
+        self.essay_count_spin.setValue(self.SHAMEL_ESSAY_COUNT)
+        self.essay_count_spin.blockSignals(False)
+        self.generate_essay_inputs()
+        for spin in self.essay_spinboxes:
+            spin.setValue(self.SHAMEL_ESSAY_POINTS)
+
+        # -- ID letters --
+        self.id_letter_count_spin.blockSignals(True)
+        self.id_letter_count_spin.setValue(self.SHAMEL_ID_LETTER_COUNT)
+        self.id_letter_count_spin.blockSignals(False)
+        self.id_letters_edit.setText(self.SHAMEL_ID_LETTERS)
+
+        self._refresh_grand_total()
+
     def toggle_essay_inputs(self, checked):
         self.essay_count_lbl.setVisible(checked)
         self.essay_count_spin.setVisible(checked)
@@ -301,7 +363,13 @@ class SetupPage(QWidget):
 
         mode_id = config.get("mode", DEFAULT_MODE_ID)
         idx = next((i for i, m in enumerate(EXAM_MODES) if m.id == mode_id), 0)
+        # Blocked: setting this programmatically must NOT trigger
+        # _on_exam_mode_changed, or reopening a saved Shamel-mode project
+        # would immediately overwrite its real saved ranges/essays/ID
+        # letters with the fresh-pick defaults below.
+        self.exam_mode_combo.blockSignals(True)
         self.exam_mode_combo.setCurrentIndex(idx)
+        self.exam_mode_combo.blockSignals(False)
 
         mcq_count = config.get("mcq_count", 10)
         self.mcq_count_spin.blockSignals(True)

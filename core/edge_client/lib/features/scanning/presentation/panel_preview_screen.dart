@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
 import '../../connection/controller/connection_controller.dart';
@@ -19,6 +20,19 @@ import '../../grading/presentation/grading_review_screen.dart';
 /// showing the specific warning message and a full-width Retake button.
 /// The retake/manual-entry fallback logic (3-strike → manual entry dialog)
 /// is preserved exactly as before.
+///
+/// TIMING INSTRUMENTATION: added to find where wall-clock time goes
+/// between "photo captured" and "result shown", since the native
+/// engine's own timing_ms (see ffi.cpp) only covers process_exam_in_memory
+/// itself and consistently measures ~1-1.5s -- far less than the ~7s the
+/// end-to-end scan feels like. This screen and CvEngineService.extractPanels
+/// both log their own phase timings so the full gap can be accounted for:
+/// screen-entry-to-pipeline-start (navigation/build overhead), EXIF fix
+/// (JPEG decode+rotate+re-encode, Dart-side, NOT covered by native
+/// timing_ms), the compute() isolate call overhead, and the native call
+/// itself. Look for lines tagged "[PanelPreviewScreen] TIMING" and
+/// "extractPanels timing_ms" in the log output (DebugLogScreen or
+/// `flutter run`'s console) after a real scan.
 class PanelPreviewScreen extends StatefulWidget {
   final String rawImagePath;
   const PanelPreviewScreen({super.key, required this.rawImagePath});
@@ -33,6 +47,13 @@ class _PanelPreviewScreenState extends State<PanelPreviewScreen> {
   _LoadState? _state;
   ProcessExamResult? _result;
 
+  // Marks the moment this screen's State object was actually created
+  // (widget pushed onto the navigator) -- compared against when
+  // _runPipeline() actually starts doing work, this isolates any stall
+  // caused by navigation/screen transition/build overhead rather than
+  // CV work itself.
+  final DateTime _screenEnteredAt = DateTime.now();
+
   @override
   void initState() {
     super.initState();
@@ -42,15 +63,30 @@ class _PanelPreviewScreenState extends State<PanelPreviewScreen> {
   Future<void> _runPipeline() async {
     setState(() => _state = null); // null == loading
 
+    final navToStartGapMs = DateTime.now().difference(_screenEnteredAt).inMilliseconds;
+    final pipelineSw = Stopwatch()..start();
+
     try {
       final connection = Provider.of<ConnectionController>(context, listen: false);
       final master = connection.masterPacket!;
-      final modelPath = await Provider.of<ModelPathRepository>(context, listen: false).resolveBubbleModelPath();
 
+      final modelPathSw = Stopwatch()..start();
+      final modelPath = await Provider.of<ModelPathRepository>(context, listen: false).resolveBubbleModelPath();
+      final modelPathMs = modelPathSw.elapsedMilliseconds;
+
+      final extractSw = Stopwatch()..start();
       final result = await Provider.of<ScanEngineRepository>(context, listen: false).extractPanels(
         rawImagePath: widget.rawImagePath,
         modelPath: modelPath,
         masterPacket: master,
+      );
+      final extractMs = extractSw.elapsedMilliseconds;
+
+      pipelineSw.stop();
+      debugPrint(
+        '[PanelPreviewScreen] TIMING screen_entered_to_pipeline_start=${navToStartGapMs}ms '
+        'resolve_model_path=${modelPathMs}ms extractPanels_call=${extractMs}ms '
+        'screen_total=${pipelineSw.elapsedMilliseconds}ms',
       );
 
       if (!mounted) return;
@@ -65,6 +101,8 @@ class _PanelPreviewScreenState extends State<PanelPreviewScreen> {
         await _advance();
       }
     } catch (e) {
+      pipelineSw.stop();
+      debugPrint('[PanelPreviewScreen] TIMING pipeline failed after ${pipelineSw.elapsedMilliseconds}ms: $e');
       if (!mounted) return;
       setState(() => _state = _LoadState.error);
     }
@@ -74,6 +112,7 @@ class _PanelPreviewScreenState extends State<PanelPreviewScreen> {
   /// the grading review screen. No extra FFI call needed — all grading
   /// data came back in the single process_exam_in_memory response.
   Future<void> _advance() async {
+    final advanceSw = Stopwatch()..start();
     try {
       final connection = Provider.of<ConnectionController>(context, listen: false);
       final master = connection.masterPacket!;
@@ -123,6 +162,9 @@ class _PanelPreviewScreenState extends State<PanelPreviewScreen> {
 
       if (!mounted) return;
       Provider.of<ScanController>(context, listen: false).setCurrentScan(gradeResult);
+
+      advanceSw.stop();
+      debugPrint('[PanelPreviewScreen] TIMING _advance (grade assembly, no CV work) took ${advanceSw.elapsedMilliseconds}ms');
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

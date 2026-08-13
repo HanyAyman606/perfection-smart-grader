@@ -52,6 +52,10 @@ class GradingReviewController extends ChangeNotifier {
       ? (double.tryParse(mcqScoreController.text) ?? 0.0) + (scan?.essayTotal ?? 0.0)
       : (scan?.mcqScore ?? 0.0) + (scan?.essayTotal ?? 0.0);
 
+  /// Sum of the per-question essay marks sent by the admin in the master
+  /// packet — the highest an essay score can legitimately be.
+  double get essayMaxTotal => _connectionController.masterPacket?.essayMaxTotal ?? 0.0;
+
   void _initFields() {
     final scan = _scanController.currentScan;
     idController = TextEditingController(text: scan?.studentId ?? '');
@@ -89,10 +93,35 @@ class GradingReviewController extends ChangeNotifier {
 
   Future<void> skipPaper() => _scanController.clearCurrentScan();
 
+  /// Checked before generating the receipt. Non-null means the essay
+  /// score entered exceeds the sum of essay marks the admin configured
+  /// for this exam — the widget shows this as a snackbar and refuses to
+  /// move to the receipt stage.
+  String? get essayValidationError {
+    final hasEssays = _connectionController.masterPacket?.hasEssays ?? false;
+    if (!hasEssays) return null;
+
+    final entered = double.tryParse(essayController.text);
+    if (entered == null) return null; // non-numeric input is caught elsewhere
+
+    final maxTotal = essayMaxTotal;
+    if (entered > maxTotal) {
+      return 'Essay score ($entered) exceeds the maximum of $maxTotal.';
+    }
+    return null;
+  }
+
   void generateReceipt() {
     _applyFieldsToScan();
     _timestamp = DateTime.now().toLocal().toString().split('.')[0];
     _isReceiptGenerated = true;
+    notifyListeners();
+  }
+
+  /// Returns to the editable ID/essay-mark form from the generated
+  /// receipt view, without discarding anything already typed in.
+  void backToEdit() {
+    _isReceiptGenerated = false;
     notifyListeners();
   }
 
@@ -124,9 +153,25 @@ class GradingReviewController extends ChangeNotifier {
   }
 
   /// Local validation, checked before calling [submit]. The widget shows
-  /// this as a snackbar and stays on screen when non-null.
-  String? get submitValidationError =>
-      idController.text.trim().isEmpty ? 'Student ID is required' : null;
+  /// this as a snackbar and stays on screen when non-null. Also checked
+  /// before generating the receipt — see GradingReviewScreen — so a bad
+  /// ID is caught at entry time, not only at final submit.
+  String? get idValidationError {
+    final id = idController.text.trim();
+    if (id.isEmpty) return 'Student ID is required';
+
+    // "000" (optionally with a single leading group letter, e.g. "C000")
+    // is what a failed/placeholder OCR read looks like — never a real
+    // student ID — so treat it the same as empty rather than letting it
+    // through to a receipt or a saved grade.
+    final digits = id.replaceFirst(RegExp(r'^[A-Za-z]'), '');
+    if (digits.isNotEmpty && RegExp(r'^0+$').hasMatch(digits)) {
+      return 'Invalid ID: "$id" is not a valid student ID.';
+    }
+    return null;
+  }
+
+  String? get submitValidationError => idValidationError;
 
   Future<SubmitResult> submit() async {
     _applyFieldsToScan();

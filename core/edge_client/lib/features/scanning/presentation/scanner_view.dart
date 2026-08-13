@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
 import '../../connection/controller/connection_controller.dart';
@@ -13,6 +14,15 @@ import '../../connection/presentation/connection_screen.dart';
 /// + orientation-reasoning stage handles rotation, so the proctor can
 /// hold the phone however is natural — no landscape lock or live
 /// alignment heuristic needed here.
+///
+/// TIMING INSTRUMENTATION: added alongside cv_engine_service.dart and
+/// panel_preview_screen.dart to find where the ~7s a scan "feels like"
+/// actually goes, given the native engine's own timing_ms consistently
+/// measures only ~1-1.5s. This file specifically times the camera
+/// capture step itself (screen open -> shutter -> photo path returned),
+/// which is the one phase none of the other instrumentation can see,
+/// since it happens entirely before CvEngineService or
+/// PanelPreviewScreen exist for this scan.
 class ScannerView extends StatefulWidget {
   const ScannerView({super.key});
 
@@ -27,9 +37,26 @@ class _ScannerViewState extends State<ScannerView> {
     if (_isCapturing) return;
     setState(() => _isCapturing = true);
 
+    // TIMED: how long the in-app camera screen itself takes, from the
+    // moment the proctor taps "Capture answer sheet" to the moment a
+    // photo path comes back. This covers CameraCaptureScreen's own
+    // camera init (if not already warm) + the actual shutter press +
+    // file write -- NOTE this necessarily also includes however long the
+    // proctor spends physically framing/positioning the sheet before
+    // tapping the shutter button, which is real time but not "stall" in
+    // the software sense -- worth eyeballing whether this number is
+    // dominated by camera init/write cost or by human positioning time
+    // when reading the log.
+    final captureSw = Stopwatch()..start();
+
     try {
       final imagePath = await Navigator.of(context).push<String>(
         MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
+      );
+      final captureMs = captureSw.elapsedMilliseconds;
+      debugPrint(
+        '[ScannerView] TIMING camera_screen_open_to_photo_path=${captureMs}ms '
+        '(includes camera init + proctor framing/positioning time + shutter + file write, not pure overhead)',
       );
 
       if (imagePath == null) {
@@ -38,8 +65,12 @@ class _ScannerViewState extends State<ScannerView> {
       }
 
       if (mounted) {
+        final navSw = Stopwatch()..start();
         await Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => PanelPreviewScreen(rawImagePath: imagePath)),
+        );
+        debugPrint(
+          '[ScannerView] TIMING PanelPreviewScreen_route_lifetime_until_popped_back=${navSw.elapsedMilliseconds}ms',
         );
       }
     } finally {

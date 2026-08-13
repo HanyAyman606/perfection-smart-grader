@@ -282,6 +282,23 @@ class OptiMarkDashboard(QMainWindow):
         super().showEvent(event)
         QTimer.singleShot(0, lambda: self._move_indicator(self.nav_buttons[0]))
 
+    def closeEvent(self, event):
+        """Gracefully stop any live grading session before the window/app
+        actually closes — this is what makes phones get the
+        'session_ending' broadcast and drop back to their login screen
+        immediately, whether the admin clicks 'STOP SERVER' first or just
+        closes this window / quits the app directly. Without this, closing
+        the app abandons the WebSocketServer's QThread mid-flight: no
+        broadcast is ever sent, and connected phones only notice via a
+        raw TCP disconnect, which puts them into the reconnect/backoff
+        path instead of an instant logout."""
+        page_session = getattr(self, "page_session", None)
+        if page_session is not None:
+            live_session = getattr(page_session, "live_session", None)
+            if live_session is not None and live_session.is_running:
+                live_session.stop()
+        super().closeEvent(event)
+
 
 def _font(family, size, weight_name="Normal"):
     """Tiny helper so topbar/sidebar building above doesn't need to import

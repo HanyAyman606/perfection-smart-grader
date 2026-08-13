@@ -120,9 +120,32 @@ class WebSocketServer(QThread):
         await self._stop_event.wait()
 
         sweep_task.cancel()
+        await self._broadcast_session_ending()
         self._server.close()
         await self._server.wait_closed()
         self.log_signal.emit("SERVER SHUTDOWN.")
+
+    async def _broadcast_session_ending(self):
+        """Tell every currently-connected phone the admin is closing the
+        server, so each client can disconnect itself, clear its session,
+        and drop back to the login screen — instead of just seeing its
+        socket die and silently retrying to reconnect.
+
+        Sent right before we close the listening socket / existing
+        connections, so phones get this message before the TCP close.
+        """
+        message = json.dumps({"type": "session_ending"})
+        with self._phones_lock:
+            connected = [p for p in self.phones.values() if p.status == "connected"]
+
+        for phone in connected:
+            try:
+                await phone.websocket.send(message)
+            except websockets.exceptions.ConnectionClosed:
+                pass
+
+        if connected:
+            self.log_signal.emit(f"Notified {len(connected)} device(s) that the session is ending.")
 
     # ------------------------------------------------------------------
     # Heartbeat sweep — catches phones that never sent a close frame
@@ -239,6 +262,19 @@ class WebSocketServer(QThread):
     # ------------------------------------------------------------------
     # Message routing
     # ------------------------------------------------------------------
+    async def _run_db(self, func, /, *args, **kwargs):
+        """Runs a blocking GradingRepository call (its own sqlite3.connect
+        + execute + commit + close, per call) on a worker thread instead
+        of the asyncio event loop. Without this, one phone's DB write
+        would block every other phone's ping/message on this same loop
+        for the duration of the disk I/O — invisible with light traffic,
+        but a real source of lag/timeouts if several phones submit near-
+        simultaneously. Each GradingRepository method opens its own
+        connection, so handing it to the default executor's thread pool
+        is safe — no connection object is shared across threads."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+
     async def _route_message(self, websocket, phone_name: str, raw_message: str):
         self._touch_phone(phone_name)
 
@@ -271,7 +307,7 @@ class WebSocketServer(QThread):
         request_id = msg.get("request_id")
 
         try:
-            existing = self.repo.get_existing_grade(student_id)
+            existing = await self._run_db(self.repo.get_existing_grade, student_id)
 
             if existing is not None:
                 await websocket.send(json.dumps({
@@ -292,7 +328,8 @@ class WebSocketServer(QThread):
                 }))
                 return
 
-            self.repo.save_grade(
+            await self._run_db(
+                self.repo.save_grade,
                 student_id=student_id,
                 mcq_score=msg.get("mcq_score", 0.0),
                 essay_total=msg.get("essay_total", 0.0),
@@ -337,7 +374,8 @@ class WebSocketServer(QThread):
         try:
             if action == "overwrite":
                 payload = msg.get("new_score_payload") or {}
-                self.repo.overwrite_grade(
+                await self._run_db(
+                    self.repo.overwrite_grade,
                     student_id=student_id,
                     mcq_score=payload.get("mcq_score", 0.0),
                     essay_total=payload.get("essay_total", 0.0),
@@ -350,7 +388,7 @@ class WebSocketServer(QThread):
                 self.score_saved.emit(student_id, float(payload.get("total_score", 0.0)))
 
             elif action == "discard_both":
-                self.repo.discard_grade(student_id)
+                await self._run_db(self.repo.discard_grade, student_id)
                 self.score_removed.emit(student_id)
 
                 # "keep_previous" -> no DB action.

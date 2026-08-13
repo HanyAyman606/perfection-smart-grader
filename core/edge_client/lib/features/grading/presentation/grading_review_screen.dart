@@ -67,6 +67,28 @@ class _GradingReviewView extends StatelessWidget {
     if (context.mounted) Navigator.of(context).pop();
   }
 
+  void _generateReceipt(BuildContext context) {
+    final controller = context.read<GradingReviewController>();
+
+    final idError = controller.idValidationError;
+    if (idError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(idError), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    final essayError = controller.essayValidationError;
+    if (essayError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(essayError), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    controller.generateReceipt();
+  }
+
   Future<void> _submit(BuildContext context) async {
     final controller = context.read<GradingReviewController>();
 
@@ -152,6 +174,7 @@ class _GradingReviewView extends StatelessWidget {
               isManual: isManual,
               showIdReviewWarning: scan.idNeedsReview,
               hasEssay: hasEssay,
+              essayMaxTotal: hasEssay ? controller.essayMaxTotal : null,
             ),
             const SizedBox(height: 24),
             if (!isManual) Text('MCQ Score: ${scan.mcqScore}', style: const TextStyle(fontSize: 18)),
@@ -170,7 +193,7 @@ class _GradingReviewView extends StatelessWidget {
                 if (!isReceiptGenerated)
                   Expanded(
                     child: ElevatedButton.icon(
-                      onPressed: controller.generateReceipt,
+                      onPressed: () => _generateReceipt(context),
                       icon: const Icon(Icons.receipt),
                       label: const Text('Generate Receipt'),
                       style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
@@ -182,6 +205,15 @@ class _GradingReviewView extends StatelessWidget {
               const SizedBox(height: 24),
               const Divider(),
               const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: controller.backToEdit,
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Back to ID / essay mark'),
+                ),
+              ),
+              const SizedBox(height: 8),
               ReceiptCard(
                 scan: scan,
                 isManual: isManual,

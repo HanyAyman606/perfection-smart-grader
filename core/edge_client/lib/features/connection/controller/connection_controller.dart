@@ -87,8 +87,14 @@ class ConnectionController extends ChangeNotifier {
     } else if (event is ConnectionLost) {
       _errorMessage = event.reason;
     } else if (event is SessionEnded) {
-      _errorMessage = 'This grading session has ended — the proctor cannot submit further scans.';
-      _phase = SessionPhase.error;
+      _errorMessage = 'This grading session was closed by the admin.';
+      _phase = SessionPhase.disconnected;
+      _masterPacket = null;
+      // Mark this as an intentional disconnect so the socket's imminent
+      // close (the server closes right after sending session_ending)
+      // doesn't trigger the automatic reconnect/backoff loop — the
+      // admin closed the server on purpose, we shouldn't fight that.
+      _connection.disconnect();
       // NOTE: intentionally does not touch in-progress scan state here.
       // ScanController listens to this same event stream independently
       // and clears its own state — see scan_controller.dart. Keeping

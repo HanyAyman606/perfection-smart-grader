@@ -21,6 +21,7 @@ class GradeFormFields extends StatelessWidget {
     required this.isManual,
     required this.showIdReviewWarning,
     required this.hasEssay,
+    this.essayMaxTotal,
   });
 
   final TextEditingController idController;
@@ -33,6 +34,10 @@ class GradeFormFields extends StatelessWidget {
   /// When false the essay field is hidden entirely. Driven by the
   /// MasterPacket.hasEssays flag set on the PySide dashboard.
   final bool hasEssay;
+
+  /// Sum of essay marks configured by the admin — shown as a hint, and
+  /// enforced as the field's ceiling by GradingReviewController.
+  final double? essayMaxTotal;
 
   @override
   Widget build(BuildContext context) {
@@ -63,7 +68,11 @@ class GradeFormFields extends StatelessWidget {
             controller: essayController,
             enabled: enabled,
             keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Essay Score', border: OutlineInputBorder()),
+            decoration: InputDecoration(
+              labelText: 'Essay Score',
+              helperText: essayMaxTotal != null ? 'Max: $essayMaxTotal' : null,
+              border: const OutlineInputBorder(),
+            ),
           ),
         ],
       ],

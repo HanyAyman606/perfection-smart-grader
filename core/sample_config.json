@@ -1,0 +1,7 @@
+{
+  "model_path": "admin_dashboard/cv_engine_bin/bubble.onnx",
+  "num_questions": 15,
+  "num_choices": 4,
+  "mcq_columns": {"num_cols": 3, "columns": {"1": 5, "2": 5, "3": 5}},
+  "id": {"num_digits": 3, "num_letters": 6, "letters": ["C","D","E","F","M","W"]}
+}

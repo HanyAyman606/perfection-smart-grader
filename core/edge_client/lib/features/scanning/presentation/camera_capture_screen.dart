@@ -1,15 +1,7 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
-/// Full-screen live camera preview with a manual shutter button — the
-/// in-app replacement for redirecting out to the phone's native camera
-/// app via image_picker. Trade-off vs. the old approach: we lose the
-/// OEM camera app's own tuned quality/stabilization pipeline, so if
-/// scans start failing Step 1's blur/confidence gate more often on some
-/// devices, that gate (see PanelExtractionResult.mustRetake downstream)
-/// is the place to look first — it was already load-bearing before this
-/// change and remains so now.
-///
+/// Full-screen live camera preview with a manual shutter button.
 /// Returns the captured photo's file path via Navigator.pop when the
 /// proctor takes a shot, or null if they back out.
 class CameraCaptureScreen extends StatefulWidget {
@@ -47,7 +39,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> with WidgetsB
 
       final controller = CameraController(
         backCamera,
-        ResolutionPreset.max, // full quality into Step 1 — no re-compression
+        ResolutionPreset.max, // Resolution kept at max for optimal bubble edge quality
         enableAudio: false,
       );
       await controller.initialize();
@@ -63,10 +55,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> with WidgetsB
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // A backgrounded camera controller holds the hardware open, which
-    // both drains battery and can block other apps from using the
-    // camera. Tear it down on pause and rebuild it on resume rather
-    // than trying to keep a single controller alive across the gap.
     final controller = _controller;
     if (controller == null) return;
 
@@ -84,7 +72,15 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen> with WidgetsB
 
     setState(() => _isCapturing = true);
     try {
+      // Isolated timing specifically for the hardware shutter press and JPEG disk write
+      final takePictureSw = Stopwatch()..start();
       final photo = await controller.takePicture();
+      takePictureSw.stop();
+
+      debugPrint(
+        '[CameraCaptureScreen] TIMING takePicture_shutter_and_write=${takePictureSw.elapsedMilliseconds}ms',
+      );
+
       if (mounted) Navigator.of(context).pop(photo.path);
     } catch (e) {
       if (mounted) {

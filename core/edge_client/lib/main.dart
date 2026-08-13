@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -38,6 +39,8 @@ class NexusEdgeApp extends StatefulWidget {
 }
 
 class _NexusEdgeAppState extends State<NexusEdgeApp> {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   Widget build(BuildContext context) {
     if (widget.nativeError != null) {
@@ -92,13 +95,17 @@ class _NexusEdgeAppState extends State<NexusEdgeApp> {
         ),
       ],
       child: MaterialApp(
+        navigatorKey: _navigatorKey,
         title: 'Nexus Edge',
         theme: ThemeData(
           brightness: Brightness.dark,
           primarySwatch: Colors.blue,
           useMaterial3: true,
         ),
-        builder: (context, child) => LifecycleManager(child: child!),
+        builder: (context, child) => LifecycleManager(
+          navigatorKey: _navigatorKey,
+          child: child!,
+        ),
         home: const ConnectionScreen(),
       ),
     );
@@ -107,13 +114,16 @@ class _NexusEdgeAppState extends State<NexusEdgeApp> {
 
 class LifecycleManager extends StatefulWidget {
   final Widget child;
-  const LifecycleManager({super.key, required this.child});
+  final GlobalKey<NavigatorState> navigatorKey;
+  const LifecycleManager({super.key, required this.child, required this.navigatorKey});
 
   @override
   State<LifecycleManager> createState() => _LifecycleManagerState();
 }
 
 class _LifecycleManagerState extends State<LifecycleManager> with WidgetsBindingObserver {
+  StreamSubscription? _sessionEventSub;
+
   @override
   void initState() {
     super.initState();
@@ -121,8 +131,37 @@ class _LifecycleManagerState extends State<LifecycleManager> with WidgetsBinding
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Subscribed once here (not per-screen) so the app returns to the
+    // login page no matter where the proctor currently is — mid-scan,
+    // reviewing a grade, looking at the receipt, etc. — the moment the
+    // admin closes the server on the dashboard.
+    _sessionEventSub ??= context.read<ConnectionRepository>().eventStream.listen((event) {
+      if (event is SessionEnded) _returnToLogin();
+    });
+  }
+
+  void _returnToLogin() {
+    final navigator = widget.navigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const ConnectionScreen()),
+      (route) => false,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = widget.navigatorKey.currentContext;
+      if (ctx == null) return;
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('This grading session was closed by the admin.')),
+      );
+    });
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _sessionEventSub?.cancel();
     super.dispose();
   }
 
