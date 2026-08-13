@@ -15,7 +15,7 @@ import pytest
 
 from admin_dashboard import live_session_controller as lsc_module
 from admin_dashboard.live_session_controller import LiveSessionController
-from admin_dashboard.cv_engine_bridge import CVEngineError, CVEngineBridge
+from admin_dashboard.cv_engine_bridge import CVEngineError
 
 
 class FakeProjectManager:

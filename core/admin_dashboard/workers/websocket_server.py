@@ -9,10 +9,29 @@ ARCHITECTURE CHANGE: grading now happens entirely on the lab machine.
 The phone no longer runs OpenCV/ONNX — it captures a photo, sends the
 raw image + manually-entered essay marks, and this server runs the same
 cv_engine (via ctypes) that used to run on-device, scores it against the
-master_packet, saves it, and sends back the result. This removes the
-4-5s on-device stall per phone and lets N phones' scans be processed
+master_packet, and sends the result back. This removes the 4-5s
+on-device stall per phone and lets N phones' scans be processed
 concurrently, bounded by the lab CPU's core count instead of by each
 phone's own CPU.
+
+TWO-PHASE COMMIT: grading and saving are deliberately two separate
+round trips, not one:
+  Phase 1 — grade_submission: phone sends the image + essay marks.
+    Server runs CV/ONNX + scoring and replies with status "graded"
+    (mcq_score, mistakes, OCR'd student_id, id_needs_review) — but does
+    NOT save anything yet. The computed result is cached server-side,
+    keyed by request_id, in _pending_submissions.
+  Phase 2 — confirm_submission: phone shows the proctor the graded
+    result, lets them correct the OCR'd student_id/group_type if
+    needed, then sends confirm_submission referencing the original
+    request_id plus the (possibly corrected) student_id/group_type.
+    THIS is what actually writes the row to the db.
+Duplicate-student-id detection intentionally happens at confirm time,
+not grade time — the id can change between phases (proctor correcting
+a bad OCR read), so checking for a duplicate before that correction
+would be checking the wrong id. A duplicate found at confirm goes
+through the exact same overwrite/keep/discard flow as before, just
+reached via confirm_submission instead of grade_submission.
 
 Responsibilities:
   - Accept phone connections, require {"type": "auth", "name", "password"}
@@ -24,18 +43,24 @@ Responsibilities:
     been heard from it (ping or otherwise) within HEARTBEAT_TIMEOUT_SECONDS
     — catches a frozen/backgrounded phone holding a dead-looking socket,
     not just a clean TCP close. The same sweep also expires any
-    grade_submission that's been sitting in _pending_duplicates too long
-    without the phone answering the "keep/overwrite/discard" prompt.
+    graded-but-unconfirmed submission sitting in _pending_submissions,
+    and any duplicate sitting in _pending_duplicates, that the phone
+    never followed up on.
   - Reply to auth success with {"type": "auth_result", "status": "success",
     "master_packet": {...}}.
   - Handle {"type": "ping"} -> {"type": "pong"}.
-  - Handle {"type": "grade_submission"}: decode the image, hand it to the
-    cv_engine (via a bounded ThreadPoolExecutor so CPU-bound work never
-    blocks the asyncio event loop / other phones), score the result
-    against GradingRepository (grades table inside the active workspace's
-    roster.db), and reply with score_result — status is one of
-    "success", "needs_retake" (blurry/unreadable scan), "duplicate"
-    (student_id already graded this session), or "error".
+  - Handle {"type": "grade_submission"} (phase 1): decode the image,
+    hand it to the cv_engine (via a bounded ThreadPoolExecutor so
+    CPU-bound work never blocks the asyncio event loop / other phones),
+    score it, cache the result, and reply with score_result — status is
+    one of "graded" (awaiting confirm_submission), "needs_retake"
+    (blurry/unreadable scan), or "error".
+  - Handle {"type": "confirm_submission"} (phase 2): look up the cached
+    graded result, save it via GradingRepository (grades table inside
+    the active workspace's roster.db) under the proctor-confirmed
+    student_id/group_type, and reply with score_result — status is one
+    of "success", "duplicate" (student_id already graded this session),
+    or "error".
   - Handle {"type": "resolve_duplicate"}: phone's decision on a pending
     duplicate (overwrite / discard_both / keep_previous). Uses the
     server-cached computed result from _pending_duplicates rather than
@@ -67,6 +92,7 @@ DEFAULT_SESSION_PASSWORD = "12345678"  # fallback if no custom password saved ye
 HEARTBEAT_TIMEOUT_SECONDS = 30   # no traffic within this window -> mark disconnected
 HEARTBEAT_SWEEP_INTERVAL = 10    # how often the sweep task checks
 STALE_DUPLICATE_SECONDS = 300    # a pending duplicate nobody resolved gets dropped, not leaked forever
+STALE_SUBMISSION_SECONDS = 300   # a graded-but-never-confirmed submission gets dropped the same way
 CV_TIMEOUT_SECONDS = 20          # a poisoned/corrupt image must not permanently eat a worker slot
 MAX_IMAGE_BYTES = 15 * 1024 * 1024  # 15MB decoded — generous for a phone photo, rejects garbage payloads early
 
@@ -134,6 +160,13 @@ class WebSocketServer(QThread):
         # re-running OpenCV/ONNX or trusting the phone to resend a score
         # it no longer computes itself.
         self._pending_duplicates: dict[str, dict] = {}
+
+        # request_id -> {"result": dict, "phone_name": str, "created_at": float}
+        # Phase-1 (grade_submission) output, cached until the phone sends
+        # confirm_submission with the proctor-reviewed student_id/group_type.
+        # Nothing here is saved to the db yet.
+        self._pending_submissions: dict[str, dict] = {}
+
         self._pending_lock = threading.Lock()
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -209,13 +242,20 @@ class WebSocketServer(QThread):
                     self.phone_disconnected.emit(name)
 
                 expired_ids = []
+                expired_request_ids = []
                 with self._pending_lock:
                     for sid, pending in list(self._pending_duplicates.items()):
                         if now - pending["created_at"] > STALE_DUPLICATE_SECONDS:
                             expired_ids.append(sid)
                             del self._pending_duplicates[sid]
+                    for rid, pending in list(self._pending_submissions.items()):
+                        if now - pending["created_at"] > STALE_SUBMISSION_SECONDS:
+                            expired_request_ids.append(rid)
+                            del self._pending_submissions[rid]
                 for sid in expired_ids:
                     self.log_signal.emit(f"DUPLICATE PROMPT EXPIRED: {sid} (no response from phone)")
+                for rid in expired_request_ids:
+                    self.log_signal.emit(f"GRADED SUBMISSION EXPIRED: request {rid} (never confirmed)")
         except asyncio.CancelledError:
             pass
 
@@ -330,6 +370,9 @@ class WebSocketServer(QThread):
         elif msg_type == "grade_submission":
             await self._handle_grade_submission(websocket, phone_name, msg)
 
+        elif msg_type == "confirm_submission":
+            await self._handle_confirm_submission(websocket, phone_name, msg)
+
         elif msg_type == "resolve_duplicate":
             await self._handle_resolve_duplicate(websocket, phone_name, msg)
 
@@ -419,24 +462,78 @@ class WebSocketServer(QThread):
             }))
             return
 
-        student_id = exam_result.get("student_id") or student_id_hint
-        id_needs_review = exam_result.get("id_needs_review", False) or (
-            not exam_result.get("student_id") and student_id_hint is not None
-        )
-        if not student_id:
-            await websocket.send(json.dumps({
-                "type": "score_result", "status": "needs_retake", "request_id": request_id,
-                "warnings": ["NO_STUDENT_ID"],
-            }))
-            return
+        ocr_student_id = exam_result.get("student_id")
+        student_id_guess = ocr_student_id or student_id_hint
+        id_needs_review = exam_result.get("id_needs_review", False) or not ocr_student_id
 
         mcq_score, mistakes = score_mcq(exam_result.get("questions", []), self.packet_data, answer_version)
         total_score = mcq_score + essay_total
 
+        # Phase 1 ends here — compute and cache, but do NOT touch the db
+        # yet. The proctor still needs to review/correct student_id and
+        # group_type on the phone before this is final; that correction
+        # arrives as confirm_submission below, referencing this request_id.
+        with self._pending_lock:
+            self._pending_submissions[request_id] = {
+                "result": dict(
+                    mcq_score=mcq_score, mistakes=mistakes, essay_total=essay_total,
+                    total_score=total_score, answer_version=answer_version,
+                    ocr_student_id=ocr_student_id, group_type=group_type,
+                ),
+                "phone_name": phone_name,
+                "created_at": asyncio.get_event_loop().time(),
+            }
+
+        await websocket.send(json.dumps({
+            "type": "score_result", "status": "graded", "request_id": request_id,
+            "student_id": student_id_guess, "id_needs_review": id_needs_review,
+            "mcq_score": mcq_score, "mistakes": mistakes, "essay_total": essay_total,
+            "total_score": total_score, "group_type": group_type,
+        }))
+        self.log_signal.emit(f"GRADED: request {request_id} ({total_score} pts) via {phone_name}, awaiting confirmation")
+
+    def _process_exam_sync(self, image_path: str) -> dict:
+        """Runs on a worker thread via run_in_executor — must stay a
+        plain blocking call, no asyncio inside it."""
+        return self.cv_engine.process_exam(image_path, **self._cv_config_kwargs)
+
+    async def _handle_confirm_submission(self, websocket, phone_name: str, msg: dict):
+        """Phase 2 — the proctor has reviewed the phase-1 graded result
+        (correcting student_id/group_type if the OCR read was wrong) and
+        is now committing it. This is the only place a grade actually
+        gets written to the db."""
+        request_id = msg.get("request_id")
+        original_request_id = msg.get("original_request_id")
+        student_id = (msg.get("student_id") or "").strip()
+        group_type = msg.get("group_type")
+
+        with self._pending_lock:
+            pending = self._pending_submissions.pop(original_request_id, None)
+
+        if pending is None:
+            await websocket.send(json.dumps({
+                "type": "score_result", "status": "error", "request_id": request_id,
+                "message": "No graded submission found for this request — it may have expired. Please retake and resubmit.",
+            }))
+            return
+
+        if not student_id:
+            # Put it back — the proctor can still fix the id and confirm
+            # again without re-running CV/ONNX a second time.
+            with self._pending_lock:
+                pending["created_at"] = asyncio.get_event_loop().time()
+                self._pending_submissions[original_request_id] = pending
+            await websocket.send(json.dumps({
+                "type": "score_result", "status": "error", "request_id": request_id,
+                "message": "Student ID is required before confirming.",
+            }))
+            return
+
+        result = pending["result"]
         payload = dict(
-            student_id=student_id, mcq_score=mcq_score, essay_total=essay_total,
-            total_score=total_score, mistakes=mistakes, answer_version=answer_version,
-            group_type=group_type,
+            student_id=student_id, mcq_score=result["mcq_score"], essay_total=result["essay_total"],
+            total_score=result["total_score"], mistakes=result["mistakes"],
+            answer_version=result["answer_version"], group_type=group_type or result["group_type"],
         )
 
         existing = self.repo.get_existing_grade(student_id)
@@ -456,7 +553,10 @@ class WebSocketServer(QThread):
                     "answer_version": existing["answer_version"],
                     "timestamp": existing["timestamp"],
                 },
-                "incoming": {"score": total_score, "answer_version": answer_version, "mistakes": mistakes},
+                "incoming": {
+                    "score": payload["total_score"], "answer_version": payload["answer_version"],
+                    "mistakes": payload["mistakes"],
+                },
             }))
             return
 
@@ -473,15 +573,9 @@ class WebSocketServer(QThread):
         self._bump_scan_count(phone_name)
         await websocket.send(json.dumps({
             "type": "score_result", "status": "success", "request_id": request_id,
-            "student_id": student_id, "total_score": total_score, "mistakes": mistakes,
-            "id_needs_review": id_needs_review,
+            "student_id": student_id, "total_score": payload["total_score"], "mistakes": payload["mistakes"],
         }))
-        self.log_signal.emit(f"SAVED: {student_id} ({total_score} pts) via {phone_name}")
-
-    def _process_exam_sync(self, image_path: str) -> dict:
-        """Runs on a worker thread via run_in_executor — must stay a
-        plain blocking call, no asyncio inside it."""
-        return self.cv_engine.process_exam(image_path, **self._cv_config_kwargs)
+        self.log_signal.emit(f"SAVED: {student_id} ({payload['total_score']} pts) via {phone_name}")
 
     async def _handle_resolve_duplicate(self, websocket, phone_name: str, msg: dict):
         student_id = msg.get("student_id")
