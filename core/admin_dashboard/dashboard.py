@@ -1,7 +1,7 @@
 """
 dashboard.py
 ------------
-CyberpunkDashboard: the QMainWindow that owns the master Login -> Welcome
+OptiMarkDashboard: the QMainWindow that owns the master Login -> Welcome
 -> Dashboard stack, the topbar/sidebar chrome, and page switching. All the
 actual page content (Setup, Templates, Session Manager) lives in pages/;
 all file/DB logic lives in ProjectManager; opening/creating a workspace
@@ -32,10 +32,10 @@ from admin_dashboard.pages.session_pages import SessionManagerPage
 from admin_dashboard.pages.model_answer_page import ModelAnswerPage
 
 NAV_SETUP, NAV_ANSWER_KEY, NAV_SESSION = range(3)
-class CyberpunkDashboard(QMainWindow):
+class OptiMarkDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Nexus Edge Grading System")
+        self.setWindowTitle("OptiMark Grading System")
         self.resize(1300, 860)
 
         self.project_manager = ProjectManager()
@@ -120,13 +120,13 @@ class CyberpunkDashboard(QMainWindow):
         layout.setContentsMargins(28, 0, 28, 0)
         layout.setSpacing(14)
 
-        self.brand_label = QLabel("NEXUS EDGE")
+        self.brand_label = QLabel("OPTIMARK")
         self.brand_label.setFont(_font(self.fonts.orbitron, 15, "Black"))
         self.brand_label.setStyleSheet(
             f"color: {SKY_AQUA}; letter-spacing: 3px; background: transparent; border: none;"
         )
 
-        self.sub_brand = QLabel("// GRADING SYSTEM")
+        self.sub_brand = QLabel("// OPTICAL MARK RECOGNITION")
         self.sub_brand.setFont(_font(self.fonts.orbitron, 9, "DemiBold"))
         self.sub_brand.setStyleSheet(
             f"color: {TEXT_MUTED}; letter-spacing: 3px; background: transparent; border: none;"
@@ -137,7 +137,7 @@ class CyberpunkDashboard(QMainWindow):
         layout.addStretch()
 
         status_dot = PulsingDot(SKY_AQUA, 10)
-        status_lbl = QLabel("SYSTEM ONLINE")
+        status_lbl = QLabel("SERVER READY")
         status_lbl.setFont(_font(self.fonts.orbitron, 9, "Bold"))
         status_lbl.setStyleSheet(
             f"color: {SKY_AQUA}; letter-spacing: 1px; background: transparent; border: none;"
@@ -171,16 +171,16 @@ class CyberpunkDashboard(QMainWindow):
         sidebar_layout.setContentsMargins(20, 32, 20, 22)
         sidebar_layout.setSpacing(12)
 
-        title_label = QLabel("NEURAL DECK")
+        title_label = QLabel("MAIN MENU")
         title_label.setObjectName("AppTitle")
         title_label.setFont(_font(self.fonts.orbitron, 16, "Black"))
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sidebar_layout.addWidget(title_label)
         sidebar_layout.addSpacing(14)
 
-        btn_setup = NavButton("⚙  Exam Blueprint", CLOUDY_SKY, self.fonts.orbitron)
+        btn_setup = NavButton("⚙  Exam Configuration", CLOUDY_SKY, self.fonts.orbitron)
         btn_answer_key = NavButton("◉  Model Answer Key", INDIGO_BLOOM, self.fonts.orbitron)
-        btn_live = NavButton("●  Session Manager", NEON_PINK, self.fonts.orbitron)
+        btn_live = NavButton("●  Live Scanning Session", NEON_PINK, self.fonts.orbitron)
 
         self.nav_buttons = [btn_setup, btn_answer_key, btn_live]
 
@@ -204,7 +204,7 @@ class CyberpunkDashboard(QMainWindow):
         self.ip_card = IpShareCard(self.fonts.mono, self.fonts.orbitron)
         sidebar_layout.addWidget(self.ip_card)
 
-        footer = QLabel("v2.4.1 · SECURE LINK")
+        footer = QLabel("v2.4.1 · Local Network")
         footer.setFont(_font(self.fonts.mono, 9))
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         footer.setStyleSheet(

@@ -20,7 +20,7 @@ widgets at all.
 from PySide6.QtCore import QObject, Signal
 
 from admin_dashboard.workers.websocket_server import WebSocketServer
-from admin_dashboard.grading_repository import new_session_id
+from admin_dashboard.grading_repository import new_session_id, GradingRepository
 
 
 class LiveSessionController(QObject):
@@ -65,8 +65,11 @@ class LiveSessionController(QObject):
         self.server_thread.score_removed.connect(self._on_score_removed)
         self.server_thread.start()
 
-        self._scores_saved_count = 0
-        self.score_count_changed.emit(0)
+        GradingRepository.ensure_grades_schema(self.project_manager.db_path)
+        existing_grades = GradingRepository.get_group_grades(self.project_manager.db_path, group_name)
+        self._scores_saved_count = len(existing_grades)
+        
+        self.score_count_changed.emit(self._scores_saved_count)
         self.session_started.emit()
 
     def stop(self):
@@ -91,6 +94,7 @@ class LiveSessionController(QObject):
     def _on_score_saved(self, _student_id, _score):
         self._scores_saved_count += 1
         self.score_count_changed.emit(self._scores_saved_count)
+        self._emit_phones_snapshot()
 
     def _on_score_removed(self, _student_id):
         self._scores_saved_count = max(0, self._scores_saved_count - 1)

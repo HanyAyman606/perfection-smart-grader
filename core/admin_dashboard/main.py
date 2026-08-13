@@ -5,12 +5,12 @@ main.py
 
 import sys
 from PySide6.QtWidgets import QApplication
-from admin_dashboard.dashboard import CyberpunkDashboard
+from admin_dashboard.dashboard import OptiMarkDashboard
 
 
 def main():
     app = QApplication(sys.argv)
-    window = CyberpunkDashboard()
+    window = OptiMarkDashboard()
     window.show()
     sys.exit(app.exec())
 
