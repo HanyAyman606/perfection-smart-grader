@@ -56,7 +56,7 @@ PUBLIC_KEY_HEX = "16e9e1cd8efd23c80c0c09aa3ba23dbbd5938cf9adc289d6501853f7e0817a
 # they'd rather not touch the install directory.
 DEFAULT_LICENSE_PATHS = [
     Path.cwd() / "license.lic",
-    Path.home() / ".nexus_edge" / "license.lic",
+    Path.home() / ".smart_grader" / "license.lic",
 ]
 
 
