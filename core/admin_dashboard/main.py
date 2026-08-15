@@ -6,10 +6,17 @@ main.py
 import sys
 from PySide6.QtWidgets import QApplication, QMessageBox
 from admin_dashboard.dashboard import OptiMarkDashboard
-from admin_dashboard.licensing.license_manager import verify_license, LicenseError
+from admin_dashboard.licensing.license_manager import verify_license, LicenseError, machine_fingerprint
 
 
 def main():
+    # Utility mode: print this machine's fingerprint and exit, no license
+    # needed. Buyers run `main.exe --fingerprint` and send you the output
+    # so you can issue a machine-locked license for them.
+    if "--fingerprint" in sys.argv:
+        print(machine_fingerprint())
+        return
+
     app = QApplication(sys.argv)
 
     # Checked before the main window is ever constructed — a compiled
@@ -18,7 +25,7 @@ def main():
     try:
         verify_license()
     except LicenseError as exc:
-        QMessageBox.critical(None, "OPTIMARK — License Required", str(exc))
+        QMessageBox.critical(None, "Nexus Edge — License Required", str(exc))
         sys.exit(1)
 
     window = OptiMarkDashboard()
@@ -28,4 +35,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
