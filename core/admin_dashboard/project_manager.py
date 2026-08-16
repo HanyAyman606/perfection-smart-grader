@@ -124,6 +124,23 @@ class ProjectManager:
             cols_left -= 1
         return {"num_cols": num_cols, "columns": columns}
 
+    @staticmethod
+    def compute_mcq_column_layout_fixed(mcq_count: int, num_cols: int = 6, col_size: int = 10) -> dict:
+        """Shamel mode's column layout: fill each column to `col_size`
+        questions before starting the next one, left to right — NOT an
+        even split like compute_mcq_column_layout(). For 44 questions
+        across 6 columns of 10: {"1": 10, "2": 10, "3": 10, "4": 10,
+        "5": 4, "6": 0}. Any column beyond what's needed is explicitly
+        0, not omitted, so the mobile client can always expect exactly
+        `num_cols` keys."""
+        remaining = max(0, mcq_count)
+        columns = {}
+        for i in range(1, num_cols + 1):
+            n = min(col_size, remaining)
+            columns[str(i)] = n
+            remaining -= n
+        return {"num_cols": num_cols, "columns": columns}
+
     def save_model_answers(self, answers_by_version: dict[str, dict], voided_by_version: dict[str, list]):
         """answers_by_version / voided_by_version are keyed by version label
         ("A", "B", ...). Quiz mode always has exactly one key
@@ -175,6 +192,11 @@ class ProjectManager:
         exam_mode = get_mode_by_id(mode_id)
         mcq_count = exam_config.get("mcq_count", 0)
 
+        if exam_mode.has_answer_versions:
+            mcq_columns = self.compute_mcq_column_layout_fixed(mcq_count, num_cols=6, col_size=10)
+        else:
+            mcq_columns = self.compute_mcq_column_layout(mcq_count)
+
         return {
             "exam_name": exam_config.get("project_name", self.project_name),
             "exam_mode": mode_id,
@@ -184,10 +206,10 @@ class ProjectManager:
             "essay_points_map": exam_config.get("essay_points_map", {}),
             "group_name": group_name,
             "answer_versions": exam_config.get("answer_versions", [SINGLE_VERSION_KEY]),
-            "model_answers": exam_config.get("model_answers", {}),      # {version: {"1": "A", ...}}
+            "model_answers": exam_config.get("model_answers", {}),  # {version: {"1": "A", ...}}
             "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}
             "choices_per_question": exam_config.get("choices_per_question", 4),
-            "mcq_columns": self.compute_mcq_column_layout(mcq_count),  # {"num_cols": 3, "columns": {"1": n, ...}}
+            "mcq_columns": mcq_columns,  # {"num_cols": n, "columns": {"1": n, ...}}
             "id": {
                 "num_digits": exam_mode.id_digit_count,  # derived from mode, not saved
                 "num_letters": len(exam_config.get("id_letters", "CDEFMW")),

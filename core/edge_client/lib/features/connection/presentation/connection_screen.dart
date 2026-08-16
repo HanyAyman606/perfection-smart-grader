@@ -90,7 +90,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           onLongPress: () {
             Navigator.of(context).push(MaterialPageRoute(builder: (_) => const DebugLogScreen()));
           },
-          child: const Text('Nexus Edge Connect'),
+          child: const Text('Perfection Smart Grader Connect'),
         ),
       ),
       body: Consumer<ConnectionController>(

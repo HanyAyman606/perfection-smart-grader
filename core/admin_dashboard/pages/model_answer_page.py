@@ -127,10 +127,15 @@ class ModelAnswerPage(QWidget):
         mode = get_mode_by_id(config.get("mode", DEFAULT_MODE_ID))
         self.supports_versions = mode.has_answer_versions
 
-        # Same column split as the Bubble Sheet Studio (col1 = ceil(n/3),
-        # then the remainder split the same way) so the answer key layout
-        # visually matches the printed sheet the graders are holding.
-        layout_cols = self.project_manager.compute_mcq_column_layout(mcq_count)
+        # Quiz mode: even split across columns (Bubble Sheet Studio's
+        # col1 = ceil(n/3) design). Shamel mode: fixed-size columns
+        # (10 questions per column, same as the sync packet sent to
+        # mobile) — so the answer-key input grid here always mirrors the
+        # printed sheet's actual column layout, in either mode.
+        if self.supports_versions:
+            layout_cols = self.project_manager.compute_mcq_column_layout_fixed(mcq_count, num_cols=6, col_size=10)
+        else:
+            layout_cols = self.project_manager.compute_mcq_column_layout(mcq_count)
         col_sizes = [layout_cols["columns"][str(c)] for c in range(1, layout_cols["num_cols"] + 1)]
 
         col_bounds = []

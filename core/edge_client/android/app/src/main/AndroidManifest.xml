@@ -3,7 +3,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="true"/>
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <application
-        android:label="nexus_edge"
+        android:label="Perfection Smart Grader"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

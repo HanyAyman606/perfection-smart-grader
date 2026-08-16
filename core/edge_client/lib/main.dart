@@ -45,7 +45,7 @@ class _NexusEdgeAppState extends State<NexusEdgeApp> {
   Widget build(BuildContext context) {
     if (widget.nativeError != null) {
       return MaterialApp(
-        title: 'Nexus Edge',
+        title: 'Perfection Smart Grader',
         theme: ThemeData.dark(),
         home: NativeLibraryErrorScreen(error: widget.nativeError!),
       );
