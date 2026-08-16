@@ -33,8 +33,8 @@ PBKDF2_ITERATIONS = 200_000
 
 class AuthManager:
     def __init__(self, config_path: str = None):
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.config_path = config_path or os.path.join(base_dir, "config", "auth_config.json")
+        app_data_dir = os.path.join(os.path.expanduser("~"), ".smart_grader")
+        self.config_path = config_path or os.path.join(app_data_dir, "auth_config.json")
         self._ensure_config_exists()
 
     # ------------------------------------------------------------------

@@ -35,7 +35,7 @@ NAV_SETUP, NAV_ANSWER_KEY, NAV_SESSION = range(3)
 class OptiMarkDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("OptiMark Grading System")
+        self.setWindowTitle("Perfection Grading System")
         self.resize(1300, 860)
 
         self.project_manager = ProjectManager()
@@ -120,7 +120,7 @@ class OptiMarkDashboard(QMainWindow):
         layout.setContentsMargins(28, 0, 28, 0)
         layout.setSpacing(14)
 
-        self.brand_label = QLabel("OPTIMARK")
+        self.brand_label = QLabel("Perfection Smart Grader")
         self.brand_label.setFont(_font(self.fonts.orbitron, 15, "Black"))
         self.brand_label.setStyleSheet(
             f"color: {SKY_AQUA}; letter-spacing: 3px; background: transparent; border: none;"

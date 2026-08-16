@@ -6,4 +6,5 @@ pandas
 openpyxl
 sqlite-utils
 qrcode
-pillowcryptography
+pillow
+cryptography

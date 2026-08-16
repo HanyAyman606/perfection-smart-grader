@@ -25,7 +25,7 @@ from admin_dashboard.group_registry import group_registry
 from admin_dashboard.roster_repository import RosterRepository
 
 
-CONFIG_FILENAME = "nexus_project.json"
+CONFIG_FILENAME = "smart_grader.json"
 DB_FILENAME = "roster.db"
 MCQ_LAYOUT_COLS = 3  # bubble sheet studio always spreads MCQs across 3 columns
 

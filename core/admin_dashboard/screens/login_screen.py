@@ -15,7 +15,7 @@ class LoginScreen(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(20)
 
-        brand_lbl = QLabel("OPTIMARK")
+        brand_lbl = QLabel("Perfection Smart Grader")
         brand_lbl.setFont(QFont(orbitron, 36, QFont.Weight.Black))
         brand_lbl.setStyleSheet(f"color: {SKY_AQUA}; letter-spacing: 5px;")
         brand_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)

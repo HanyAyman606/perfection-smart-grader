@@ -32,8 +32,8 @@ class GroupRegistry(QObject):
 
     def __init__(self, config_path: str = None):
         super().__init__()
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.config_path = config_path or os.path.join(base_dir, "config", "groups.json")
+        app_data_dir = os.path.join(os.path.expanduser("~"), ".smart_grader")
+        self.config_path = config_path or os.path.join(app_data_dir, "groups.json")
 
     def _load(self) -> list[str]:
         if not os.path.exists(self.config_path):
