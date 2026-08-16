@@ -20,3 +20,9 @@
 -dontwarn com.google.android.play.core.splitcompat.**
 -dontwarn com.google.android.play.core.splitinstall.**
 -dontwarn com.google.android.play.core.tasks.**
+# Camera/QR-scanning libraries — camerax and mobile_scanner touch these
+# reflectively at runtime; R8 strips them by default under --release,
+# causing camera init to silently fail only in release builds.
+-keep class androidx.camera.** { *; }
+-keep class com.google.mlkit.** { *; }
+-keep class dev.steenbakker.mobile_scanner.** { *; }
