@@ -44,7 +44,7 @@ class LiveSessionController(QObject):
     def scores_saved_count(self) -> int:
         return self._scores_saved_count
 
-    def start(self, group_name: str, master_packet: dict):
+    def start(self, group_name: str, master_packet: dict, printer_name: str = "Xprinter XP-80"):
         """Raises RuntimeError if a session is already running — the
         caller is expected to check `is_running` first for a friendlier
         message, but this guards the invariant either way."""
@@ -57,6 +57,7 @@ class LiveSessionController(QObject):
             session_id=new_session_id(),
             group_name=group_name,
             session_password=self.project_manager.get_session_password(),
+            printer_name=printer_name,
         )
         self.server_thread.log_signal.connect(self.log_message.emit)
         self.server_thread.phone_connected.connect(self._emit_phones_snapshot)

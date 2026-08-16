@@ -8,3 +8,5 @@ sqlite-utils
 qrcode
 pillow
 cryptography
+python-escpos
+pytest-asyncio

@@ -34,11 +34,20 @@ import websockets
 from PySide6.QtCore import QThread, Signal
 
 from admin_dashboard.grading_repository import GradingRepository
-
+from admin_dashboard.printing.receipt_printer import build_receipt_data, print_ultimate_receipt
 SYNC_PORT = 8765
 DEFAULT_SESSION_PASSWORD = "12345678"  # fallback if no custom password saved yet
 HEARTBEAT_TIMEOUT_SECONDS = 30   # no traffic within this window -> mark disconnected
 HEARTBEAT_SWEEP_INTERVAL = 10    # how often the sweep task checks
+
+
+def _compute_max_score(packet_data: dict) -> float:
+    mcq_max = sum(
+        (r["end"] - r["start"] + 1) * r["points"]
+        for r in packet_data.get("mcq_ranges", [])
+    )
+    essay_max = sum(packet_data.get("essay_points_map", {}).values())
+    return mcq_max + essay_max
 
 
 @dataclass
@@ -76,11 +85,14 @@ class WebSocketServer(QThread):
     score_removed = Signal(str)
 
     def __init__(self, packet_data: dict, db_path: str, session_id: str, group_name: str,
-                 session_password: str = DEFAULT_SESSION_PASSWORD):
+                 session_password: str = DEFAULT_SESSION_PASSWORD,
+                 printer_name: str = "Xprinter XP-80"):
         super().__init__()
         self.packet_data = packet_data
         self.session_id = session_id
         self.session_password = session_password
+        self.printer_name = printer_name
+        self.max_score = _compute_max_score(packet_data)
         self.repo = GradingRepository(db_path, session_id)
         self.repo.start_session(group_name)
 
@@ -366,6 +378,25 @@ class WebSocketServer(QThread):
         self.log_signal.emit(f"SAVED: {student_id} ({msg.get('total_score')} pts) via {phone_name}")
         self.score_saved.emit(student_id, float(msg.get("total_score", 0.0)))
 
+        # Fire the physical receipt immediately after a successful save.
+        # proctor_name is the phone's already-authenticated name (see
+        # _authenticate) — mistakes are exactly what the phone computed
+        # during scanning, never recomputed here. Runs on a worker thread
+        # since python-escpos does blocking I/O — a slow/stuck printer must
+        # never stall this asyncio loop for other connected phones.
+        receipt_data = build_receipt_data(
+            student_id=student_id,
+            mcq_score=msg.get("mcq_score", 0.0),
+            essay_score=msg.get("essay_total", 0.0),
+            total_score=msg.get("total_score", 0.0),
+            max_score=self.max_score,
+            mistakes=msg.get("mistakes", []),
+            quiz_name=self.packet_data.get("exam_name", "Exam"),
+        )
+        asyncio.get_event_loop().run_in_executor(
+            None, print_ultimate_receipt, self.printer_name, receipt_data, phone_name
+        )
+
     async def _handle_resolve_duplicate(self, websocket, phone_name: str, msg: dict):
         student_id = msg.get("student_id")
         action = msg.get("action")
@@ -387,11 +418,28 @@ class WebSocketServer(QThread):
                 self._bump_scan_count(phone_name)
                 self.score_saved.emit(student_id, float(payload.get("total_score", 0.0)))
 
+                # Same as a fresh submit_score success — a new grade was
+                # actually saved (the old one replaced), so print a receipt
+                # for it. discard_both/keep_previous never reach here since
+                # neither produces a new saved grade.
+                receipt_data = build_receipt_data(
+                    student_id=student_id,
+                    mcq_score=payload.get("mcq_score", 0.0),
+                    essay_score=payload.get("essay_total", 0.0),
+                    total_score=payload.get("total_score", 0.0),
+                    max_score=self.max_score,
+                    mistakes=payload.get("mistakes", []),
+                    quiz_name=self.packet_data.get("exam_name", "Exam"),
+                )
+                asyncio.get_event_loop().run_in_executor(
+                    None, print_ultimate_receipt, self.printer_name, receipt_data, phone_name
+                )
+
             elif action == "discard_both":
                 await self._run_db(self.repo.discard_grade, student_id)
                 self.score_removed.emit(student_id)
 
-                # "keep_previous" -> no DB action.
+                # "keep_previous" -> no DB action, no receipt.
         except Exception as e:
             # Same reasoning as _handle_submit_score: always answer back
             # so resolveDuplicateAndAwait on the phone doesn't just time out.
@@ -435,3 +483,4 @@ class WebSocketServer(QThread):
                 }
                 for p in self.phones.values()
             ]
+
