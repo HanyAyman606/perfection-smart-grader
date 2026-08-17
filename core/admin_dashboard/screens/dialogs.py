@@ -10,9 +10,9 @@ import os
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
-    QListView, QLineEdit, QAbstractItemView,QFileSystemModel
+    QListView, QLineEdit, QAbstractItemView, QFileSystemModel, QComboBox
 )
-from PySide6.QtCore import Qt, QDir, QSize
+from PySide6.QtCore import Qt, QDir, QSize, QStorageInfo
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, NEON_PINK, BG_PANEL, BG_CARD, TRUE_AZURE, WARN_COLOR, CLOUDY_SKY,TEXT_FEED
@@ -60,14 +60,54 @@ class ThemedFileBrowserDialog(QDialog):
             QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; }}
         """)
         btn_up.clicked.connect(self._go_up)
-        self.path_label = QLabel(self.current_dir)
-        self.path_label.setStyleSheet(f"color: {TEXT_MUTED}; font-family: monospace; font-size: 11px;")
         nav_row.addWidget(btn_up)
+
+        # Drive switcher — cdUp() alone can never leave a drive root (e.g.
+        # "C:/"), so without this there's no way to reach D:, E:, a USB
+        # stick, etc. QStorageInfo.mountedVolumes() is used instead of
+        # QDir.drives(), which is unreliable and can under-report mounted
+        # drives on some systems. isValid()/isReady() filters out drives
+        # that aren't actually accessible (e.g. empty optical drives,
+        # disconnected network shares). It returns just the one root on
+        # Linux/Mac, so the combo degrades harmlessly there.
+        volumes = [v for v in QStorageInfo.mountedVolumes() if v.isValid() and v.isReady()]
+        if len(volumes) > 1:
+            self.drive_combo = QComboBox()
+            self.drive_combo.setStyleSheet(f"""
+                QComboBox {{ background-color: {BG_PANEL}; color: {TEXT_MUTED};
+                border: 2px solid {TEXT_MUTED}; border-radius: 6px; padding: 6px 10px; }}
+            """)
+            current_drive_path = QDir(self.current_dir).rootPath()
+            for vol in volumes:
+                drive_path = vol.rootPath()
+                self.drive_combo.addItem(drive_path, drive_path)
+            idx = self.drive_combo.findData(current_drive_path)
+            if idx >= 0:
+                self.drive_combo.setCurrentIndex(idx)
+            self.drive_combo.currentIndexChanged.connect(self._on_drive_changed)
+            nav_row.addWidget(self.drive_combo)
+        else:
+            self.drive_combo = None
+
+        self.path_label = QLineEdit(self.current_dir)
+        self.path_label.setStyleSheet(f"""
+            QLineEdit {{ background-color: transparent; color: {TEXT_MUTED};
+            font-family: monospace; font-size: 11px; border: 1px solid transparent;
+            border-radius: 4px; padding: 2px 4px; }}
+            QLineEdit:focus {{ background-color: {BG_CARD}; border: 1px solid {TRUE_AZURE}; }}
+        """)
+        self.path_label.setToolTip("Type or paste a path and press Enter to navigate there directly — "
+                                    "useful for drives that don't show up above (network shares, phones, etc.)")
+        self.path_label.returnPressed.connect(self._on_path_entered)
         nav_row.addWidget(self.path_label, stretch=1)
         layout.addLayout(nav_row)
 
         self.model = QFileSystemModel()
-        self.model.setRootPath(QDir.rootPath())
+        # Empty root path = whole filesystem, not just the C:/ drive.
+        # Pinning this to QDir.rootPath() (which is "C:/" on Windows)
+        # kept indexes for other drives (D:/, E:/, etc.) from resolving
+        # correctly in some Qt versions.
+        self.model.setRootPath("")
         if mode == "select_directory":
             self.model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
         else:
@@ -153,7 +193,50 @@ class ThemedFileBrowserDialog(QDialog):
         self.current_dir = path
         self.view.setRootIndex(self.model.index(path))
         self.path_label.setText(path)
+        self._sync_drive_combo(path)
         self._update_confirm_enabled()
+
+    def _on_path_entered(self):
+        """Manual fallback — lets the user reach any path the drive combo
+        and folder grid can't, e.g. a network share, a phone's MTP path,
+        or any drive that QStorageInfo didn't detect."""
+        path = self.path_label.text().strip()
+        if not path:
+            return
+
+        # Absolute paths (C:\..., \\server\share, /home/...) resolve as-is.
+        # Relative paths (e.g. "Exams\Quiz1") must resolve against the
+        # folder currently being browsed, not the process's working
+        # directory — QDir(path).exists() alone checks the latter, which
+        # in a frozen/onefile build is rarely what the user is looking at,
+        # so a relative path would silently fail to navigate.
+        candidate = QDir(path)
+        if not candidate.isAbsolute():
+            candidate = QDir(self.current_dir)
+            if not candidate.cd(path):
+                candidate = QDir(path)  # fall back to CWD-relative as a last resort
+
+        if candidate.exists():
+            self._navigate_to(candidate.absolutePath())
+        else:
+            # Invalid path — revert the text so it doesn't look like the
+            # navigation silently succeeded.
+            self.path_label.setText(self.current_dir)
+
+    def _sync_drive_combo(self, path: str):
+        if not self.drive_combo:
+            return
+        root = QDir(path).rootPath()
+        idx = self.drive_combo.findData(root)
+        if idx >= 0 and idx != self.drive_combo.currentIndex():
+            self.drive_combo.blockSignals(True)
+            self.drive_combo.setCurrentIndex(idx)
+            self.drive_combo.blockSignals(False)
+
+    def _on_drive_changed(self, index):
+        drive_path = self.drive_combo.itemData(index)
+        if drive_path:
+            self._navigate_to(drive_path)
 
     def _go_up(self):
         d = QDir(self.current_dir)

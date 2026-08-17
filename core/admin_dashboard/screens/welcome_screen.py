@@ -1,6 +1,7 @@
 import os
+import sys
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QMessageBox
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QFont, QDesktopServices
 
@@ -10,10 +11,51 @@ from admin_dashboard.theme import (
 from admin_dashboard.screens.change_password_dialog import ChangePasswordDialog
 from admin_dashboard.recent_projects import recent_projects
 
+
+def _get_app_base_dir():
+    """
+    Directory that contains the 'admin_dashboard' package/assets at runtime.
+
+    Nuitka standalone/onefile still writes real files to disk at runtime —
+    onefile unpacks its payload into a temp extraction folder and then runs
+    from there — so this module's own __file__ correctly points inside that
+    temp folder when compiled, same as it points into the source tree when
+    running plain 'python main.py'. That makes it a reliable base in both
+    cases, unlike __compiled__ (only reliably present on __main__, and not
+    even consistently there depending on Nuitka version) or sys.executable
+    (which for onefile is the small launcher stub's own folder, e.g. dist/,
+    NOT the temp folder its payload was actually extracted into).
+    """
+    file_based = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.exists(os.path.join(file_based, "admin_dashboard", "assets")):
+        return file_based
+
+    # Fallbacks, in case __file__ ever doesn't line up (e.g. a future
+    # Nuitka layout change) — try __compiled__ off __main__, then the
+    # executable's own folder, before giving up and returning the
+    # __file__-based guess anyway so callers still get *something*.
+    compiled = getattr(sys.modules.get("__main__"), "__compiled__", None)
+    if compiled is not None:
+        candidate = compiled.containing_dir
+        if os.path.exists(os.path.join(candidate, "admin_dashboard", "assets")):
+            return candidate
+    if getattr(sys, "frozen", False):
+        candidate = os.path.dirname(sys.executable)
+        if os.path.exists(os.path.join(candidate, "admin_dashboard", "assets")):
+            return candidate
+    return file_based
+
+
 STUDIO_HTML_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "assets", "bubble_sheet_studio.html",
+    _get_app_base_dir(), "admin_dashboard", "assets", "bubble_sheet_studio.html",
 )
+if not os.path.exists(STUDIO_HTML_PATH):
+    # Some Nuitka layouts place the package contents directly at the
+    # extraction root rather than nested under admin_dashboard/. Try that
+    # layout too before giving up, so this doesn't silently 404 in the UI.
+    _alt = os.path.join(_get_app_base_dir(), "assets", "bubble_sheet_studio.html")
+    if os.path.exists(_alt):
+        STUDIO_HTML_PATH = _alt
 
 
 class WelcomeScreen(QWidget):
@@ -160,8 +202,28 @@ class WelcomeScreen(QWidget):
         workspace — it launches in the system's default browser, same as
         it used to from inside the dashboard, just reachable from the hub
         now instead of a sidebar page."""
-        if os.path.exists(STUDIO_HTML_PATH):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(STUDIO_HTML_PATH))
+        if not os.path.exists(STUDIO_HTML_PATH):
+            QMessageBox.warning(
+                self, "Bubble Sheet Studio",
+                f"Could not find bubble_sheet_studio.html.\nLooked at:\n{STUDIO_HTML_PATH}",
+            )
+            return
+
+        ok = QDesktopServices.openUrl(QUrl.fromLocalFile(STUDIO_HTML_PATH))
+        if not ok:
+            # Fallback: bypass Qt's URL dispatch and ask the OS shell directly.
+            try:
+                if sys.platform.startswith("win"):
+                    os.startfile(STUDIO_HTML_PATH)  # type: ignore[attr-defined]
+                else:
+                    import subprocess
+                    opener = "open" if sys.platform == "darwin" else "xdg-open"
+                    subprocess.Popen([opener, STUDIO_HTML_PATH])
+            except Exception as e:
+                QMessageBox.warning(
+                    self, "Bubble Sheet Studio",
+                    f"Failed to open the browser for:\n{STUDIO_HTML_PATH}\n\n{e}",
+                )
 
     def _open_change_password_dialog(self):
         dialog = ChangePasswordDialog(self.orbitron, self.mono, parent=self)
