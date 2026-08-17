@@ -16,6 +16,49 @@ static char* allocate_string(const std::string& str) {
     return cstr;
 }
 
+static void finalize_cause(nlohmann::json& out, const nlohmann::json* explicit_cause = nullptr) {
+    if (explicit_cause) {
+        out["cause"] = *explicit_cause;
+        return;
+    }
+
+    const std::string status = out.value("status", "");
+    if (status == "SUCCESS") {
+        out["cause"] = nullptr;
+        return;
+    }
+
+    nlohmann::json flagged = nlohmann::json::array();
+    
+    bool want_mismatch = (status == "QUESTIONS_NUMBER_MISMATCH");
+    bool want_review = (status == "REVIEW_NEEDED");
+    
+    if (want_mismatch || want_review) {
+        auto check_and_add = [&](const nlohmann::json& item, bool is_id) {
+            if (!item.contains("state")) return;
+            std::string state = item["state"];
+            
+            if (want_mismatch && state == "QUESTIONS_NUMBER_MISMATCH") {
+                flagged.push_back(item);
+            } else if (want_review) {
+                float conf = item.value("answer_confidence", 1.0f);
+                if ((state == "ANSWERED" || state == "MULTIPLE" || state == "BLANK") && conf < 0.55f) {
+                    flagged.push_back(item);
+                }
+            }
+        };
+
+        if (out.contains("questions") && out["questions"].is_array()) {
+            for (const auto& q : out["questions"]) check_and_add(q, false);
+        }
+        if (out.contains("id_columns") && out["id_columns"].is_array()) {
+            for (const auto& c : out["id_columns"]) check_and_add(c, true);
+        }
+    }
+
+    out["cause"] = flagged.empty() ? nlohmann::json(status) : flagged;
+}
+
 extern "C" {
 
 const char* process_exam_in_memory(const char* image_path, const char* config_json_str) {
@@ -31,18 +74,13 @@ const char* process_exam_in_memory(const char* image_path, const char* config_js
         
         // Pass step 1 signals through to the final payload
         nlohmann::json result = final_result.to_json_obj();
-        result["status"] = "SUCCESS";
-        result["confidence"] = quality.is_ok ? "OK" : "LOW";
-        result["warnings"] = quality.warnings;
-        result["orientation_reason"] = quality.orientation_reason;
-        result["blur_score"] = quality.blur_score;
-        result["id_panel_blur_score"] = quality.id_panel_blur_score;
-        result["mcq_panel_blur_score"] = quality.mcq_panel_blur_score;
-        result["num_quad_candidates"] = quality.num_quad_candidates;
-
+        
         // Early exit: if the image quality is bad (e.g., BLUR or NO_ID_PANEL),
         // skip the heavy ONNX inference completely to save CPU!
         if (!quality.is_ok) {
+            result["status"] = "FAILED";
+            nlohmann::json explicit_cause = quality.warnings.empty() ? nlohmann::json("UNKNOWN") : nlohmann::json(quality.warnings.front());
+            finalize_cause(result, &explicit_cause);
             return allocate_string(result.dump());
         }
 
@@ -67,24 +105,26 @@ const char* process_exam_in_memory(const char* image_path, const char* config_js
         }
 
         for (const auto& q : final_result.questions) {
-            if (q.state == "ERROR_MISSING") final_result.has_missing_rows = true;
+            if (q.state == "QUESTIONS_NUMBER_MISMATCH") final_result.has_missing_rows = true;
         }
         for (const auto& c : final_result.id_columns) {
-            if (c.state == "ERROR_MISSING") final_result.has_missing_rows = true;
+            if (c.state == "QUESTIONS_NUMBER_MISMATCH") final_result.has_missing_rows = true;
         }
+
+        final_result.update_status(); // Compute overall status (RETAKE, MISMATCH, REVIEW_NEEDED, SUCCESS)
 
         // Merge inference results into the final payload
         nlohmann::json inference_json = final_result.to_json_obj();
         result.update(inference_json);
+        
+        finalize_cause(result);
 
         return allocate_string(result.dump());
     } catch (const std::exception& e) {
         std::cerr << "Error in process_exam_in_memory: " << e.what() << std::endl;
         nlohmann::json err;
-        err["status"] = "ERROR";
-        err["message"] = e.what();
-        err["confidence"] = "LOW";
-        err["warnings"] = nlohmann::json::array({"PROCESSING_ERROR"});
+        err["status"] = "FAILED";
+        err["cause"] = "ERROR_INTERNAL";
         return allocate_string(err.dump());
     }
 }

@@ -1,0 +1,4 @@
+C:/Users/Yassin/pergection-smart-grader/core/cv_engine/build/CMakeFiles/ai_corrector.dir
+C:/Users/Yassin/pergection-smart-grader/core/cv_engine/build/CMakeFiles/ai_corrector_cli.dir
+C:/Users/Yassin/pergection-smart-grader/core/cv_engine/build/CMakeFiles/edit_cache.dir
+C:/Users/Yassin/pergection-smart-grader/core/cv_engine/build/CMakeFiles/rebuild_cache.dir
