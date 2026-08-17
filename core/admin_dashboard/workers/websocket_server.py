@@ -93,6 +93,7 @@ class WebSocketServer(QThread):
         self.session_password = session_password
         self.printer_name = printer_name
         self.max_score = _compute_max_score(packet_data)
+        self.group_name = group_name
         self.repo = GradingRepository(db_path, session_id)
         self.repo.start_session(group_name)
 
@@ -319,8 +320,7 @@ class WebSocketServer(QThread):
         request_id = msg.get("request_id")
 
         try:
-            existing = await self._run_db(self.repo.get_existing_grade, student_id)
-
+            existing = await self._run_db(self.repo.get_existing_grade_in_group, self.group_name, student_id)
             if existing is not None:
                 await websocket.send(json.dumps({
                     "type": "score_result",

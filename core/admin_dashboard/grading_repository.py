@@ -200,6 +200,33 @@ class GradingRepository:
             for r in rows
         ]
 
+    def get_existing_grade_in_group(self, group_name: str, student_id: str) -> Optional[dict]:
+        """Same as get_existing_grade, but checks across EVERY session ever
+        started for this group — not just the current one. A student
+        already graded in a prior session (before the group was closed and
+        reopened) must still be caught as a duplicate; session_id is a
+        per-'Start Live Grading'-click implementation detail, not a
+        meaningful boundary for what counts as 'already graded'."""
+        conn = self._connect()
+        cursor = conn.execute(
+            "SELECT g.final_score, g.answer_version, g.mistakes_log, g.timestamp "
+            "FROM grades g JOIN sessions s ON g.session_id = s.session_id "
+            "WHERE s.group_name = ? AND g.student_id = ? "
+            "ORDER BY g.timestamp DESC LIMIT 1",
+            (group_name, student_id),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        if not row:
+            return None
+        final_score, answer_version, mistakes_log, timestamp = row
+        return {
+            "score": final_score,
+            "answer_version": answer_version,
+            "mistakes": json.loads(mistakes_log) if mistakes_log else [],
+            "timestamp": timestamp,
+        }
+
     @staticmethod
     def delete_group_grades(db_path: str, group_name: str) -> int:
         """Wipes every grade ever saved for this group, across all its

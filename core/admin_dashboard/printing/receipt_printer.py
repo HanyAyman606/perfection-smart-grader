@@ -123,6 +123,7 @@ def print_ultimate_receipt(printer_name, student_data, proctor_name):
         p._raw(NORMAL_SIZE + BOLD_OFF)
         p.text("\n\n\n")
         p.cut()
+        p.close()
 
     except Exception as e:
         # Must never crash or block a grade save — the grade is already
