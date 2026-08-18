@@ -54,17 +54,23 @@ struct ShamelPanels {
 };
 
 // Step 1: Extract and perspective-correct the three panels from the raw image,
-// then split the MCQ panel into its 6 sub-regions. Save all crops to disk.
-// Returns the paths wrapped in JSON fields matching the documented API.
+// then split the MCQ panel into its 6 sub-regions.
 //
-// Saved file naming:
+// save_to_disk (default true, for step1_extract_panels/backward compatibility):
+//   when true, also writes each crop (and the debug phase2 overlay) to disk
+//   next to image_path, using the naming scheme below, and the returned
+//   paths are valid. When false, nothing is written to disk at all — only
+//   the in-memory cv::Mat fields on the returned ShamelPanels are populated
+//   (used by the single-call in-memory pipeline).
+//
+// Saved file naming (save_to_disk = true only):
 //   {image_path}_shamel_id.jpg
 //   {image_path}_shamel_version.jpg
 //   {image_path}_shamel_mcq.jpg
 //   {image_path}_shamel_mcq_1_top_left.jpg
 //   {image_path}_shamel_mcq_2_bottom_left.jpg
 //   ... (column-major)
-ShamelPanels extract_shamel_panels(const std::string& image_path);
+ShamelPanels extract_shamel_panels(const std::string& image_path, bool save_to_disk = true);
 
 // Step 2: Given the already-warped ID mat, run grouping to detect two single-row sets.
 // The version panel has exactly 2 rows of bubbles:

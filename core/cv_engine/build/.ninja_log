@@ -1,7 +1,12 @@
 # ninja log v7
-50	4459	8087065680897302	CMakeFiles/ai_corrector_cli.dir/src/main.cpp.obj	c503f0cddb9c4774
-15	5333	8087065680551517	CMakeFiles/ai_corrector.dir/src/grouping.cpp.obj	b37d2cf0fef8ed9e
-7	7856	8087065680476506	CMakeFiles/ai_corrector.dir/src/preprocessing.cpp.obj	2a9e4775f19841cc
-24	8743	8087065680643336	CMakeFiles/ai_corrector.dir/src/inference.cpp.obj	931ea2872986d0ac
-40	10520	8087065680809565	CMakeFiles/ai_corrector.dir/src/ffi.cpp.obj	6a13274f29b6e39e
-13	5083	8087067170561865	CMakeFiles/ai_corrector.dir/src/questions.cpp.obj	195fb08bf1ef8f64
+14	4197	8087421807205726	CMakeFiles/ai_corrector.dir/src/grouping.cpp.obj	b37d2cf0fef8ed9e
+9	5364	8087421807164884	CMakeFiles/ai_corrector.dir/src/shamel_preprocessing.cpp.obj	86c284e3d3d542de
+5	5407	8087421807113490	CMakeFiles/ai_corrector.dir/src/preprocessing.cpp.obj	2a9e4775f19841cc
+24	5652	8087421807303879	CMakeFiles/ai_corrector.dir/src/questions.cpp.obj	195fb08bf1ef8f64
+50	6910	8087421807568585	CMakeFiles/ai_corrector_cli.dir/src/shamel_phases.cpp.obj	c6e9e2156bea8f63
+19	7633	8087421807261005	CMakeFiles/ai_corrector.dir/src/inference.cpp.obj	931ea2872986d0ac
+41	8383	8087421807499710	CMakeFiles/ai_corrector_cli.dir/src/main.cpp.obj	c503f0cddb9c4774
+31	10112	8087421807393297	CMakeFiles/ai_corrector.dir/src/ffi.cpp.obj	6a13274f29b6e39e
+10113	11827	8087421914613647	libai_corrector.dll	a0ba2fa86bece441
+10113	11827	8087421914613647	libai_corrector.dll.a	a0ba2fa86bece441
+11827	12100	8087421925337972	ai_corrector_cli.exe	eff4c633bff5b46f

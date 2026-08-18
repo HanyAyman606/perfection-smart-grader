@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <stdexcept>
 #include <nlohmann/json.hpp>
 
@@ -26,33 +27,47 @@ struct IDConfig {
     }
 };
 
-struct ThresholdConfig {
-    double blur_variance = 15.0;
-    double exposure_dark_ratio = 0.02;
-    double min_panel_area_ratio = 0.005;
-    double max_panel_area_ratio = 0.45;
-    double max_quad_side_ratio = 2.2;
-    double min_quad_angle_deg = 35.0;
-    double max_quad_angle_deg = 145.0;
+// Version panel config (shamel mode only).
+// exam_models: labels for each bubble in the first row (e.g. ["A","B","C","D"])
+// exam_days:   labels for each bubble in the second row (e.g. ["1","2","3"])
+struct VersionConfig {
+    std::vector<std::string> exam_models;
+    std::vector<std::string> exam_days;
+};
+
+// MCQ columns configuration (quiz mode).
+// Specifies the number of questions per column for flexible layouts.
+// Example: 3 columns with [5, 5, 6] questions = 16 total
+struct MCQColumnsConfig {
+    int num_cols = 1;  // number of columns
+    std::map<std::string, int> columns;  // column_id -> question_count mapping
+    
+    int total_questions() const {
+        int total = 0;
+        for (const auto& [_, count] : columns) {
+            total += count;
+        }
+        return total;
+    }
+    
+    // Get question count for a specific column (1-indexed)
+    int get_column_questions(int col_idx) const {
+        std::string key = std::to_string(col_idx);
+        auto it = columns.find(key);
+        return it != columns.end() ? it->second : 0;
+    }
 };
 
 struct ExamConfig {
+    std::string mode = "quiz"; // "quiz" or "shamel"
     std::string model_path;
     int num_questions = 0;
     int num_choices = 0;
-    int num_question_columns = 1;
+    int num_question_columns = 1; // quiz only (legacy, for backward compatibility)
     int row_tolerance_px = 15;
     IDConfig id;
-    ThresholdConfig tuning; // Optional tuning values for testing
-
-    // Authoritative per-column question counts, e.g. [9, 8, 8] for 25
-    // questions in 3 columns. This reflects the actual printed template
-    // (see project_manager.py::compute_mcq_column_layout, which is the
-    // same math used by the Bubble Sheet Studio template generator), not
-    // a re-derived guess. Empty means "not provided" — callers should
-    // fall back to an even split across num_question_columns in that
-    // case (e.g. old flat-int config payloads, or the CLI/test harness).
-    std::vector<int> mcq_column_sizes;
+    VersionConfig version; // shamel only
+    MCQColumnsConfig mcq_columns; // quiz only (new per-column layout)
 
     std::vector<std::string> choice_labels() const {
         std::vector<std::string> labels;
@@ -64,66 +79,42 @@ struct ExamConfig {
 };
 
 inline void from_json(const nlohmann::json& j, IDConfig& c) {
-    if (j.contains("num_digits")) j.at("num_digits").get_to(c.num_digits);
-    
-    // The Flutter frontend sends 'num_letters' to mean the number of letters in the pool (e.g., 6 for A-F).
-    // The physical layout of the paper statically has exactly 1 letter column.
-    c.num_letters = 1; 
-
-    if (j.contains("letters")) j.at("letters").get_to(c.letters);
+    if (j.contains("num_digits"))  j.at("num_digits").get_to(c.num_digits);
+    if (j.contains("num_letters")) j.at("num_letters").get_to(c.num_letters);
+    if (j.contains("letters"))     j.at("letters").get_to(c.letters);
 }
 
-inline void from_json(const nlohmann::json& j, ThresholdConfig& c) {
-    if (j.contains("blur")) j.at("blur").get_to(c.blur_variance);
-    if (j.contains("exposure")) j.at("exposure").get_to(c.exposure_dark_ratio);
-    if (j.contains("min_panel_area_ratio")) j.at("min_panel_area_ratio").get_to(c.min_panel_area_ratio);
-    if (j.contains("max_panel_area_ratio")) j.at("max_panel_area_ratio").get_to(c.max_panel_area_ratio);
-    if (j.contains("max_quad_side_ratio")) j.at("max_quad_side_ratio").get_to(c.max_quad_side_ratio);
-    if (j.contains("min_quad_angle_deg")) j.at("min_quad_angle_deg").get_to(c.min_quad_angle_deg);
-    if (j.contains("max_quad_angle_deg")) j.at("max_quad_angle_deg").get_to(c.max_quad_angle_deg);
+inline void from_json(const nlohmann::json& j, VersionConfig& c) {
+    if (j.contains("exam_models")) j.at("exam_models").get_to(c.exam_models);
+    if (j.contains("exam_days"))   j.at("exam_days").get_to(c.exam_days);
+}
+
+inline void from_json(const nlohmann::json& j, MCQColumnsConfig& c) {
+    if (j.contains("num_cols")) j.at("num_cols").get_to(c.num_cols);
+    if (j.contains("columns")) {
+        // Parse the columns object: {"1": 5, "2": 5, "3": 6}
+        auto cols_obj = j.at("columns");
+        for (auto& [key, value] : cols_obj.items()) {
+            c.columns[key] = value.get<int>();
+        }
+    }
 }
 
 inline void from_json(const nlohmann::json& j, ExamConfig& c) {
     j.at("model_path").get_to(c.model_path);
     j.at("num_questions").get_to(c.num_questions);
     j.at("num_choices").get_to(c.num_choices);
-    if (j.contains("row_tolerance_px")) j.at("row_tolerance_px").get_to(c.row_tolerance_px);
-    if (j.contains("id")) j.at("id").get_to(c.id);
-    if (j.contains("tuning")) j.at("tuning").get_to(c.tuning);
-
-    // Preferred path: the real wire shape sent by MasterPacket.toExamConfigJson()
-    // and mirrored by project_manager.py's build_sync_packet — e.g.
-    //   "mcq_columns": {"num_cols": 3, "columns": {"1": 9, "2": 8, "3": 8}}
-    // This is the authoritative printed-template layout; both
-    // num_question_columns and mcq_column_sizes are derived from it so
-    // they can never disagree with each other or with the paper.
+    if (j.contains("mode"))                 j.at("mode").get_to(c.mode);
+    if (j.contains("num_question_columns")) j.at("num_question_columns").get_to(c.num_question_columns);
+    if (j.contains("row_tolerance_px"))     j.at("row_tolerance_px").get_to(c.row_tolerance_px);
+    if (j.contains("id"))                   j.at("id").get_to(c.id);
+    if (j.contains("version"))              j.at("version").get_to(c.version);
     if (j.contains("mcq_columns")) {
-        const auto& mc = j.at("mcq_columns");
-        int num_cols = mc.value("num_cols", 1);
-        c.num_question_columns = num_cols;
-        c.mcq_column_sizes.assign(num_cols, 0);
-        if (mc.contains("columns")) {
-            const auto& cols = mc.at("columns");
-            for (int i = 0; i < num_cols; ++i) {
-                std::string key = std::to_string(i + 1);
-                if (cols.contains(key)) {
-                    c.mcq_column_sizes[i] = cols.at(key).get<int>();
-                }
-            }
+        j.at("mcq_columns").get_to(c.mcq_columns);
+        // For new quiz layouts the per-column count is authoritative even when the
+        // legacy field is omitted. Keep the legacy value unless it was explicitly set.
+        if (c.num_question_columns <= 1 && c.mcq_columns.num_cols > 1) {
+            c.num_question_columns = c.mcq_columns.num_cols;
         }
-        
-        int sum = 0;
-        for (int size : c.mcq_column_sizes) {
-            sum += size;
-        }
-        if (sum != c.num_questions) {
-            throw std::runtime_error("mcq_columns sums to " + std::to_string(sum) + " but num_questions is " + std::to_string(c.num_questions) + " — config is malformed");
-        }
-    } else if (j.contains("num_question_columns")) {
-        // Back-compat: old flat-int payloads (CLI/test harness, older
-        // callers). No authoritative per-column split available, so
-        // leave mcq_column_sizes empty — downstream code falls back to
-        // an even split in this case.
-        j.at("num_question_columns").get_to(c.num_question_columns);
     }
 }

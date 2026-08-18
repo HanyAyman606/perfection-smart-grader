@@ -269,7 +269,7 @@ static GeometryScore evaluate_quad_geometry(const std::vector<cv::Point2f>& pts)
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-ShamelPanels extract_shamel_panels(const std::string& image_path) {
+ShamelPanels extract_shamel_panels(const std::string& image_path, bool save_to_disk) {
     ShamelPanels result;
 
     cv::Mat img = cv::imread(image_path);
@@ -317,8 +317,10 @@ ShamelPanels extract_shamel_panels(const std::string& image_path) {
     result.mcq_mat = warp_quad(img, mcq_quad->pts);
 
     // Save full MCQ panel
-    std::string mcq_path = image_path + "_shamel_mcq.jpg";
-    cv::imwrite(mcq_path, *result.mcq_mat);
+    if (save_to_disk) {
+        std::string mcq_path = image_path + "_shamel_mcq.jpg";
+        cv::imwrite(mcq_path, *result.mcq_mat);
+    }
 
     // ── Split MCQ into 6 sub-regions (column-major order) ────────────────────
     {
@@ -356,8 +358,10 @@ ShamelPanels extract_shamel_panels(const std::string& image_path) {
         for (const auto& region_name : region_fill_order()) {
             auto it = cell_mats.find(region_name);
             if (it == cell_mats.end() || it->second.empty()) continue;
-            std::string rpath = image_path + "_shamel_mcq_" + std::to_string(region_idx) + "_" + region_name + ".jpg";
-            cv::imwrite(rpath, it->second);
+            if (save_to_disk) {
+                std::string rpath = image_path + "_shamel_mcq_" + std::to_string(region_idx) + "_" + region_name + ".jpg";
+                cv::imwrite(rpath, it->second);
+            }
             result.mcq_regions.push_back(it->second);
             result.mcq_region_names.push_back(region_name);
             ++region_idx;
@@ -553,17 +557,18 @@ ShamelPanels extract_shamel_panels(const std::string& image_path) {
     // Save ID and Version panels
     if (id_frame != nullptr) {
         result.id_mat = warp_quad(img, id_frame->pts);
-        cv::imwrite(image_path + "_shamel_id.jpg", *result.id_mat);
+        if (save_to_disk) cv::imwrite(image_path + "_shamel_id.jpg", *result.id_mat);
     }
     if (version_frame != nullptr) {
         result.version_mat = warp_quad(img, version_frame->pts);
-        cv::imwrite(image_path + "_shamel_version.jpg", *result.version_mat);
+        if (save_to_disk) cv::imwrite(image_path + "_shamel_version.jpg", *result.version_mat);
     }
 
     // ── CREATE PHASE 2 VISUALIZATION ────────────────────────────────────────
     // Draw only the 3 final selected frames (ID, VERSION, MCQ) on original image
-    // This shows the effect of geometric rule filtering
-    {
+    // This shows the effect of geometric rule filtering. Debug-only — skipped
+    // entirely (no disk write) when save_to_disk is false.
+    if (save_to_disk) {
         cv::Mat vis_img = img.clone();
         int line_thickness = std::max(4, w / 400);
         double font_scale = std::max(1.5, (double)w / 800.0);

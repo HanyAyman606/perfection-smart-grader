@@ -545,7 +545,7 @@ std::vector<QuestionResult> process_questions_per_column(
     return results;
 }
 
-std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optional<std::string>, bool> process_student_id(
+std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optional<std::string>> process_student_id(
     const std::vector<Detection>& detections,
     int num_digits,
     int num_letters,
@@ -557,14 +557,11 @@ std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optiona
     auto columns = grouping::group_by_columns(detections, row_tolerance_px);
 
     std::vector<IDColumnResult> id_col_results;
-    bool needs_review = false;
-
     for (int col_idx = 0; col_idx < total_cols; ++col_idx) {
         std::string label = col_idx < (int)column_labels.size() ? column_labels[col_idx] : "COL_" + std::to_string(col_idx);
 
         if (col_idx >= (int)columns.size()) {
-            id_col_results.push_back({label, STATE_QUESTIONS_NUMBER_MISMATCH, std::monostate{}});
-            needs_review = true;
+            id_col_results.push_back({label, STATE_ERROR_MISSING, std::monostate{}});
             continue;
         }
 
@@ -573,15 +570,11 @@ std::tuple<std::vector<IDColumnResult>, std::optional<std::string>, std::optiona
         size_t expected_row_count = is_letter_col ? letters.size() : (size_t)kIdDigitRowCount;
         auto row_labels = build_row_labels(is_letter_col, letters, (int)expected_row_count);
 
-        auto res = classify_column(label, col_dets, row_labels, expected_row_count);
-        if (res.state == STATE_BLANK || res.state == STATE_MULTIPLE || res.state == STATE_QUESTIONS_NUMBER_MISMATCH) {
-            needs_review = true;
-        }
-        id_col_results.push_back(res);
+        id_col_results.push_back(classify_column(label, col_dets, row_labels, expected_row_count));
     }
 
     auto [id_str, id_letter] = assemble_id(id_col_results, num_letters);
-    return {id_col_results, id_str, id_letter, needs_review};
+    return {id_col_results, id_str, id_letter};
 }
 
 } // namespace questions

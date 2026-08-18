@@ -26,7 +26,7 @@ rule CXX_COMPILER__ai_corrector_unscanned_
 
 rule CXX_SHARED_LIBRARY_LINKER__ai_corrector_
   command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\msys64\ucrt64\bin\c++.exe $LANGUAGE_COMPILE_FLAGS $ARCH_FLAGS $LINK_FLAGS -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 $in $LINK_PATH $LINK_LIBRARIES && $POST_BUILD"
-  description = Linking CXX shared library $TARGET_FILE; Copying onnxruntime.dll next to ai_corrector.dll
+  description = Linking CXX shared library $TARGET_FILE; Copying onnxruntime runtime DLL next to ai_corrector.dll
   restat = $RESTAT
 
 

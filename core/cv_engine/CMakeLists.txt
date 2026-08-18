@@ -52,6 +52,7 @@ file(COPY ${ONNXRUNTIME_HEADERS} DESTINATION "${ONNXRUNTIME_STAGE_DIR}/onnxrunti
 
 add_library(ai_corrector SHARED
     src/preprocessing.cpp
+    src/shamel_preprocessing.cpp
     src/grouping.cpp
     src/inference.cpp
     src/questions.cpp
@@ -86,7 +87,10 @@ endif()
 
 # --- CLI test executable (desktop only; not built/used on Android) -------
 if(NOT ANDROID)
-    add_executable(ai_corrector_cli src/main.cpp)
+    add_executable(ai_corrector_cli
+        src/main.cpp
+        src/shamel_phases.cpp
+    )
     target_link_libraries(ai_corrector_cli PRIVATE ai_corrector)
     target_include_directories(ai_corrector_cli PRIVATE
         include
@@ -107,12 +111,31 @@ endif()
 # dependencies from within the APK's native library directory at
 # app-install/load time -- there's no "copy next to the exe" step needed.
 if(NOT ANDROID)
-    add_custom_command(TARGET ai_corrector POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
-            "$<TARGET_FILE_DIR:ai_corrector>"
-        COMMENT "Copying onnxruntime.dll next to ai_corrector.dll"
+    # The "lib/onnxruntime.dll" path only holds for the extracted-zip layout
+    # documented above (Windows prebuilt zip). An MSYS2/MinGW package install
+    # (e.g. -DONNXRUNTIME_ROOT="C:/msys64/ucrt64") follows MSYS2's normal
+    # split instead: the runtime .dll lives in bin/, and lib/ only has the
+    # .dll.a import library used at link time (same reason OpenCV's runtime
+    # DLL is handled separately below) -- so search both locations rather
+    # than assuming one.
+    file(GLOB ONNXRUNTIME_RUNTIME_DLLS
+        "${ONNXRUNTIME_ROOT}/bin/*onnxruntime*.dll"
+        "${ONNXRUNTIME_ROOT}/lib/*onnxruntime*.dll"
     )
+    if(ONNXRUNTIME_RUNTIME_DLLS)
+        list(GET ONNXRUNTIME_RUNTIME_DLLS 0 ONNXRUNTIME_RUNTIME_DLL)
+        add_custom_command(TARGET ai_corrector POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNXRUNTIME_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:ai_corrector>"
+            COMMENT "Copying onnxruntime runtime DLL next to ai_corrector.dll"
+        )
+    else()
+        message(WARNING "Could not find an onnxruntime runtime .dll under "
+            "${ONNXRUNTIME_ROOT}/bin or ${ONNXRUNTIME_ROOT}/lib -- "
+            "ai_corrector.dll will fail to load until that DLL is copied "
+            "next to it manually.")
+    endif()
 
     # OpenCV's Windows package ships its runtime DLL in bin/, separate from
     # lib/ (which only has the .lib import library) -- confirmed via

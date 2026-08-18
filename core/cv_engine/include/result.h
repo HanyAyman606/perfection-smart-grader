@@ -23,6 +23,7 @@ inline std::string get_class_name(int class_id) {
 const std::string STATE_BLANK                     = "BLANK";
 const std::string STATE_ANSWERED                  = "ANSWERED";
 const std::string STATE_MULTIPLE                  = "MULTIPLE";
+const std::string STATE_ERROR_MISSING             = "ERROR_MISSING";
 const std::string STATE_QUESTIONS_NUMBER_MISMATCH = "QUESTIONS_NUMBER_MISMATCH";
 const std::string STATE_FAILED                    = "FAILED";
 
@@ -75,10 +76,10 @@ struct IDColumnResult {
 
 // Result for the shamel version panel (exam model + exam day).
 struct VersionResult {
-    std::string exam_model_state = STATE_QUESTIONS_NUMBER_MISMATCH;
+    std::string exam_model_state = STATE_ERROR_MISSING;
     std::optional<std::string> exam_model;
     float exam_model_confidence = 1.0f;  // min confidence of detected answer (0-1)
-    std::string exam_day_state   = STATE_QUESTIONS_NUMBER_MISMATCH;
+    std::string exam_day_state   = STATE_ERROR_MISSING;
     std::optional<std::string> exam_day;
     float exam_day_confidence = 1.0f;  // min confidence of detected answer (0-1)
 
@@ -106,8 +107,6 @@ struct CorrectionResult {
     std::optional<std::string>   annotated_mcq_image_path;
     std::vector<std::string>     annotated_mcq_region_paths;
     std::optional<std::string>   annotated_version_image_path;
-    bool id_needs_review = false;
-    bool has_missing_rows = false;
 
     void update_status() {
         // Stage 1/2: Fatal Pipeline Errors
@@ -119,12 +118,14 @@ struct CorrectionResult {
             return;
         }
 
+        bool has_missing = false;
         bool has_number_mismatch = false;
         int low_confidence_count = 0;
         const float LOW_CONFIDENCE_THRESHOLD = 0.55f;
 
         for (const auto& q : questions) {
             if (q.state == STATE_QUESTIONS_NUMBER_MISMATCH) has_number_mismatch = true;
+            else if (q.state == STATE_ERROR_MISSING) has_missing = true;
             else if (q.state == STATE_ANSWERED || q.state == STATE_MULTIPLE || q.state == STATE_BLANK) {
                 if (q.answer_confidence < LOW_CONFIDENCE_THRESHOLD) {
                     low_confidence_count++;
@@ -132,7 +133,7 @@ struct CorrectionResult {
             }
         }
         for (const auto& c : id_columns) {
-            if (c.state == STATE_QUESTIONS_NUMBER_MISMATCH) has_number_mismatch = true;
+            if (c.state == STATE_ERROR_MISSING) has_missing = true;
             else if (c.state == STATE_ANSWERED || c.state == STATE_MULTIPLE || c.state == STATE_BLANK) {
                 if (c.answer_confidence < LOW_CONFIDENCE_THRESHOLD) {
                     low_confidence_count++;
@@ -140,14 +141,14 @@ struct CorrectionResult {
             }
         }
         if (version) {
-            if (version->exam_model_state == STATE_QUESTIONS_NUMBER_MISMATCH) has_number_mismatch = true;
+            if (version->exam_model_state == STATE_ERROR_MISSING) has_missing = true;
             else if (version->exam_model_state == STATE_ANSWERED || version->exam_model_state == STATE_MULTIPLE) {
                 if (version->exam_model_confidence < LOW_CONFIDENCE_THRESHOLD) {
                     low_confidence_count++;
                 }
             }
 
-            if (version->exam_day_state == STATE_QUESTIONS_NUMBER_MISMATCH) has_number_mismatch = true;
+            if (version->exam_day_state == STATE_ERROR_MISSING) has_missing = true;
             else if (version->exam_day_state == STATE_ANSWERED || version->exam_day_state == STATE_MULTIPLE) {
                 if (version->exam_day_confidence < LOW_CONFIDENCE_THRESHOLD) {
                     low_confidence_count++;
@@ -158,6 +159,12 @@ struct CorrectionResult {
         // Stage 3: Number Mismatch
         if (has_number_mismatch) {
             status = STATE_QUESTIONS_NUMBER_MISMATCH;
+            return;
+        }
+        
+        // Stage 4: Missing Elements
+        if (has_missing) {
+            status = "ERROR_MISSING";
             return;
         }
         
@@ -193,9 +200,6 @@ struct CorrectionResult {
         if (annotated_mcq_image_path) j["annotated_mcq_image_path"]     = annotated_mcq_image_path.value();
         if (!annotated_mcq_region_paths.empty()) j["annotated_mcq_region_paths"] = annotated_mcq_region_paths;
         if (annotated_version_image_path) j["annotated_version_image_path"] = annotated_version_image_path.value();
-
-        j["id_needs_review"] = id_needs_review;
-        j["has_missing_rows"] = has_missing_rows;
 
         return j;
     }
