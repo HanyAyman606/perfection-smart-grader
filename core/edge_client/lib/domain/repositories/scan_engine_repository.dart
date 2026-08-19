@@ -2,26 +2,39 @@ import '../entities/exam_models.dart' show MasterPacket, GradeResult;
 import '../../data/scanning/cv_engine_service.dart' show ProcessExamResult;
 
 /// Contract for the single-call scan pipeline (panel extraction +
-/// inference/scoring in one native call). Today backed by [CvEngineService],
-/// which talks to the native cv_engine library over FFI via
-/// process_exam_in_memory — but nothing above this layer should need to
-/// know FFI is involved, only that it can hand over a raw image and get
-/// a result back.
+/// inference/scoring in one native call). Backed by [CvEngineService],
+/// which calls `run_exam_pipeline` from `libexam_scanner_ffi.so` via
+/// FFI. The pipeline shells out to 6 stage executables, writes output
+/// to `outputDir`, and Dart reads back `stage6/summary.json`.
 abstract class ScanEngineRepository {
-  /// Single pipeline call: locate and crop the ID/MCQ panels, run OCR/bubble
-  /// inference, and return both the scan quality signal and grading payload.
-  /// The caller checks [ProcessExamResult.mustRetake] to decide whether to
-  /// show an error screen or build a [GradeResult] and proceed to review.
+  /// Runs the full 6-stage pipeline: locate and crop the ID/MCQ panels,
+  /// run bubble inference, score answers, and return a merged quality +
+  /// grading result.
+  ///
+  /// [rawImagePath]  — absolute path to the captured photo.
+  /// [modelPath]     — absolute path to `shamel.onnx` (resolved by
+  ///                   [ModelPathRepository]).
+  /// [masterPacket]  — exam config pushed from the admin dashboard.
+  /// [outputDir]     — writable scratch directory; the pipeline writes
+  ///                   `<outputDir>/<imageStem>/stage1/` … `stage6/`
+  ///                   (resolved by [PipelinePathService]).
+  /// [binDir]        — directory containing the 6 stage executables and
+  ///                   `shamel.onnx` on the target device (resolved by
+  ///                   [PipelinePathService]).
+  ///
+  /// The caller checks [ProcessExamResult.mustRetake] to decide whether
+  /// to show an error/retake screen or build a [GradeResult] and proceed.
   Future<ProcessExamResult> extractPanels({
     required String rawImagePath,
     required String modelPath,
     required MasterPacket masterPacket,
+    required String outputDir,
+    required String binDir,
   });
 
-  /// Kept for interface compatibility. The actual work is done inside
-  /// [extractPanels] via process_exam_in_memory. Use
-  /// [CvEngineService.buildGradeResult] to convert a [ProcessExamResult]
-  /// into a [GradeResult] for the grading review screen.
+  /// Kept for interface compatibility. Not used — all work is done inside
+  /// [extractPanels]. Use [CvEngineService.buildGradeResult] to convert a
+  /// [ProcessExamResult] into a [GradeResult] for the grading review screen.
   Future<GradeResult> inferAndScore({
     required String idPanelPath,
     required String mcqPanelPath,

@@ -32,20 +32,23 @@ android {
 
         externalNativeBuild {
             cmake {
-                // Passed straight through to cv_engine's CMakeLists.txt.
-                // OpenCV_DIR points at the SDK's static-libs config
-                // (not the default native/jni, which resolves to the
-                // fat shared libopencv_java4.so) so ai_corrector.so gets
-                // OpenCV baked in directly instead of depending on a
-                // 23MB shared library at runtime — see CMakeLists.txt's
-                // OpenCV section for why. VERIFY sdk/native/staticlibs/
-                // arm64-v8a/ actually exists in your installed SDK
-                // version before relying on this; if it doesn't, drop
-                // "/staticlibs" back to "/native/jni" and keep
-                // libopencv_java4.so in jniLibs.srcDirs below.
+                // Passed straight through to the NEW cv_engine's
+                // CMakeLists.txt (7-target pipeline: stage1_boxes …
+                // stage6_scoring, run_pipeline, exam_scanner_ffi). This
+                // previously pointed at settings for the OLD single-lib
+                // ai_corrector engine (static OpenCV, no ONNXRUNTIME_ROOT
+                // ANDROID branch existed yet) — update BOTH paths below to
+                // match your actual installed Android OpenCV SDK / ONNX
+                // Runtime Android package locations; these are placeholders.
+                // OpenCV_DIR: point at the SDK's config, NOT staticlibs —
+                // the new engine's 6 stage executables + exam_scanner_ffi.so
+                // all link OpenCV independently, so a static link would
+                // duplicate ~20MB+ of OpenCV code across 7 binaries. Prefer
+                // the SDK's shared-lib jni/ config and keep
+                // libopencv_java4.so in jniLibs.srcDirs below (already
+                // there).
                 arguments(
                           "-DOpenCV_DIR=/home/eyad-amr/Desktop/OpenCV-android-sdk/sdk/native/jni",
-                          "-DBUILD_SHARED_LIBS=OFF",
                           "-DCMAKE_BUILD_TYPE=Release",
                           "-DONNXRUNTIME_ROOT=/home/eyad-amr/Desktop/onnxruntime-android-1.28.0"
                          )
@@ -55,10 +58,16 @@ android {
 
     externalNativeBuild {
         cmake {
-            // Points at the actual cv_engine CMakeLists.txt -- built as
+            // Points at the NEW cv_engine's CMakeLists.txt -- built as
             // part of THIS app's native build rather than requiring a
             // separately pre-built .so, so Gradle handles recompiling it
             // automatically whenever the C++ source changes.
+            //
+            // NOTE: the CMakeLists.txt's ANDROID block repackages the 6
+            // stage executables as lib<stage>.so so Gradle's packaging
+            // step includes them (plain add_executable() outputs are
+            // otherwise silently dropped from the APK) — this is
+            // UNVERIFIED on a real device, see that file's comment.
             path = file("../../../cv_engine/CMakeLists.txt")
             version = "3.22.1"
         }
@@ -81,21 +90,17 @@ android {
             )
         }
     }
-
     sourceSets {
         getByName("main") {
-            // ONNX Runtime's prebuilt .so still ships as a real runtime
-            // shared-library dependency — that one's legitimate and
-            // still needs to be here. libopencv_java4.so (previously
-            // bundled from .../sdk/native/libs, the SDK's *shared*-lib
-            // folder) is dropped: with OpenCV linked statically into
-            // ai_corrector.so instead (see the externalNativeBuild
-            // arguments above), nothing in the APK depends on it at
-            // load time anymore, and it was ~23MB of dead weight sitting
-            // in every build.
             jniLibs.srcDirs(
-                "C:/Users/asus/Downloads/onnxruntime-android-1.28.0/jni"
+                "/home/eyad-amr/Desktop/onnxruntime-android-1.28.0/jni"
             )
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 }

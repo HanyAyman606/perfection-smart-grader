@@ -103,7 +103,7 @@ The C++ CV Engine requires ONNX Runtime and OpenCV headers at build time. On And
 
 ### Edge Client (Flutter)
 1. Ensure the built native library (`libai_corrector.so`, etc.) is placed in the respective platform-specific directories (`android/app/src/main/jniLibs`, etc.).
-2. Ensure `bubble.onnx` is placed in `core/edge_client/assets/models/`.
+2. Ensure `shamel.onnx` is placed in `core/edge_client/assets/models/`.
 3. `cd core/edge_client`
 4. `flutter pub get`
 5. `flutter run`
@@ -207,7 +207,7 @@ AI_CORRECTOR_EXPORT void free_string(char* str);
 
 ## 12. Data/Model Versioning
 
-- **ONNX Model**: The system relies on a bundled asset `bubble.onnx`. Updates to this model require pushing a new build of the Flutter app.
+- **ONNX Model**: The system relies on a bundled asset `shamel.onnx`. Updates to this model require pushing a new build of the Flutter app.
 - **Schema Versions**: Config payloads expect specific JSON keys. Backwards compatibility is maintained (e.g., falling back to `num_question_columns` if the newer, authoritative `mcq_columns` map is missing, as noted in `MIGRATION_NOTES.md`).
 
 ---
@@ -235,7 +235,7 @@ AI_CORRECTOR_EXPORT void free_string(char* str);
 - **Missing Coverage**:
   - Lack of automated unit tests for the C++ geometric grouping (`grouping.cpp`, `questions.cpp`).
   - No continuous integration (CI) tests that cross the FFI boundary (e.g., passing a test image from Dart and validating the JSON output).
-  - Model regression testing (ensuring a new `bubble.onnx` doesn't drop accuracy on historical edge-case images).
+  - Model regression testing (ensuring a new `shamel.onnx` doesn't drop accuracy on historical edge-case images).
 
 ---
 

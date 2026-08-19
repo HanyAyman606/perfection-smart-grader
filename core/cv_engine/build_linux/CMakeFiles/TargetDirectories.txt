@@ -1,4 +1,10 @@
-/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/ai_corrector.dir
-/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/ai_corrector_cli.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/stage1_boxes.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/stage2_warp.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/stage3_orient.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/stage4_final.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/stage5_inference.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/stage6_scoring.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/run_pipeline.dir
+/home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/exam_scanner_ffi.dir
 /home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/edit_cache.dir
 /home/eyad-amr/Desktop/perfection/core/cv_engine/build_linux/CMakeFiles/rebuild_cache.dir

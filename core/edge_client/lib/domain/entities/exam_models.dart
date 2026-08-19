@@ -59,6 +59,18 @@ class McqRange {
 /// build_sync_packet() exactly — this is NOT the same shape as the C++
 /// engine's ExamConfig; see toExamConfigJson() for that translation.
 class MasterPacket {
+  /// Physical sheet layout constants — these describe how many ID columns
+  /// are actually printed on the bubble sheet, and must NEVER be derived
+  /// from idNumLetters/idNumDigits. Those two fields describe pool sizes
+  /// (idNumLetters = how many distinct letters exist to choose from, e.g.
+  /// 6 for "CDEFMW"; idNumDigits = how many digit values exist per column,
+  /// always 10 for 0-9) — NOT how many columns are printed. Conflating the
+  /// two caused id_letter_cols to be sent as 6 instead of 1, which made the
+  /// FFI/C++ side read 6 letter columns instead of 1, corrupting every ID
+  /// read (e.g. "D---C-2-5" instead of a clean "E123").
+  static const int idLetterCols = 1; // always exactly one printed letter column
+  static const int idDigitCols = 3;  // always exactly three printed digit columns
+
   final String examName;
   final String examMode; // "quiz" | "shamel"
   final int mcqCount;
@@ -135,59 +147,40 @@ class MasterPacket {
     );
   }
 
-  /// Builds the JSON string passed as `config_json_str` into both
-  /// step1_extract_panels and step2_infer_and_score. This is the
-  /// translation layer between the dashboard's wire format and the C++
-  /// engine's ExamConfig::from_json (see config.h) — field names and
-  /// shapes intentionally differ from the dashboard packet above because
-  /// each side owns its own contract; this is the one place they meet.
+  /// Translates the dashboard's [MasterPacket] into the JSON file that
+  /// `run_exam_pipeline` expects on disk as `exam_config.json`.
   ///
-  /// The tuning* parameters mirror config.h's ThresholdConfig exactly,
-  /// defaults included — the dashboard doesn't send these today (there's
-  /// no tuning UI yet), so they default to the same values ThresholdConfig
-  /// itself falls back to when `from_json` finds no "tuning" key at all.
-  /// Passing them explicitly here means every payload the engine parses
-  /// carries a concrete tuning block regardless, rather than the C++ side
-  /// defaulting them silently — makes the actual thresholds in effect for
-  /// a given scan visible from the Dart side (e.g. for debug logging) and
-  /// gives us a single place to wire up a future tuning UI without
-  /// touching config.h's parser again.
-  String toExamConfigJson({
-    required String modelPath,
-    int rowTolerancePx = 15,
-    double tuningBlur = 15.0,
-    double tuningExposure = 0.02,
-    double tuningMinPanelAreaRatio = 0.005,
-    double tuningMaxPanelAreaRatio = 0.45,
-    double tuningMaxQuadSideRatio = 2.2,
-    double tuningMinQuadAngleDeg = 35.0,
-    double tuningMaxQuadAngleDeg = 145.0,
-  }) {
+  /// Matches the schema declared in `cv_engine/include/exam_config.hpp`:
+  ///   exam_id, exam_type, num_questions (REQUIRED)
+  ///   id_letters (string, e.g. "CDEFMW"), id_digit_cols (REQUIRED)
+  ///   num_choices, id_letter_cols, num_mcq_columns (optional, have defaults)
+  ///   model_path (optional, defaults to "shamel.onnx" in C++)
+  ///
+  /// Column question counts are NOT sent — the engine derives them via
+  /// ceil-division from num_questions / num_mcq_columns, matching the same
+  /// rule used by bubble_sheet_studio.html.
+  String toExamConfigJson({required String modelPath}) {
     return jsonEncode({
-      'model_path': modelPath,
+      // Required fields
+      'exam_id':       examName,
+      'exam_type':     examMode,   // "quiz" | "shamel"
       'num_questions': mcqCount,
-      'num_choices': choicesPerQuestion,
-      'row_tolerance_px': rowTolerancePx,
-      // Authoritative shape — matches config.h's preferred parse path
-      // exactly, so num_question_columns AND mcq_column_sizes are both
-      // derived from the real printed layout, never re-guessed.
-      'mcq_columns': mcqColumns.toJson(),
-      'id': {
-        'num_digits': idNumDigits,
-        'num_letters': idNumLetters,
-        'letters': idLetters,
-      },
-      // Matches config.h's ThresholdConfig::from_json key names exactly
-      // ("blur"/"exposure", not "blur_variance"/"exposure_dark_ratio").
-      'tuning': {
-        'blur': tuningBlur,
-        'exposure': tuningExposure,
-        'min_panel_area_ratio': tuningMinPanelAreaRatio,
-        'max_panel_area_ratio': tuningMaxPanelAreaRatio,
-        'max_quad_side_ratio': tuningMaxQuadSideRatio,
-        'min_quad_angle_deg': tuningMinQuadAngleDeg,
-        'max_quad_angle_deg': tuningMaxQuadAngleDeg,
-      },
+      // id_letters: join the List<String> into a single string e.g. "CDEFMW"
+      'id_letters':    idLetters.join(''),
+      // id_digit_cols / id_letter_cols describe the PRINTED sheet layout —
+      // always 3 digit columns and 1 letter column. idNumDigits/idNumLetters
+      // are pool sizes (how many values are valid per column / how many
+      // distinct letters exist), not column counts, and must not be reused
+      // here — see the constants' doc comment above.
+      'id_digit_cols': idDigitCols,
+      // Optional overrides (C++ defaults: num_choices=4, id_letter_cols=1, num_mcq_columns=3)
+      'num_choices':     choicesPerQuestion,
+      'id_letter_cols':  idLetterCols,
+      'num_mcq_columns': mcqColumns.numCols,
+      // Model path — must match the filename copied to app support by ModelPathService.
+      // "shamel.onnx" is the C++ default; we pass it explicitly so the
+      // value is always visible in logs regardless of C++ defaults.
+      'model_path': modelPath,
     });
   }
 }

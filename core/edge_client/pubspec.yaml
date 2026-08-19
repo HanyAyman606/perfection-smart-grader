@@ -15,6 +15,7 @@ dependencies:
   ffi: ^2.1.2
   path_provider: ^2.1.3
   image: ^4.2.0
+  path: ^1.9.0
   camera: ^0.11.0+2
   mobile_scanner: ^5.2.3
   shared_preferences: ^2.5.5
@@ -33,8 +34,10 @@ flutter_launcher_icons:
 flutter:
   uses-material-design: true
   assets:
-    - assets/models/bubble.onnx
+    - assets/models/shamel.onnx
 
-  # Native cv_engine library (libai_corrector.so / .dll / .dylib) is NOT
-  # bundled as a Flutter asset — see MIGRATION_NOTES.md for how it needs
-  # to be wired into android/app and ios/Runner per platform.
+  # Native cv_engine library (libexam_scanner_ffi.so / .dll / .dylib) and
+  # stage executables (stage1_boxes … stage6_scoring) are NOT bundled as
+  # Flutter assets — see linux/CMakeLists.txt for how they are installed into
+  # the app bundle at build time. On Android, package them as native libs
+  # and set android:extractNativeLibs=true.

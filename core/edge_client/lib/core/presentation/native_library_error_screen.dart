@@ -31,7 +31,7 @@ class NativeLibraryErrorScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             const Text(
-              "The compiled native OMR library (omr_engine) could not be loaded for this device's architecture. Please ensure it was built and bundled correctly for your ABI.",
+              "The compiled native scanning library (libexam_scanner_ffi) could not be loaded for this device's architecture. Please ensure it was built and bundled correctly for your ABI.",
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16),
             ),

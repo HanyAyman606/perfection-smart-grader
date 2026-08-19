@@ -13,7 +13,7 @@ import 'features/scanning/controller/scan_controller.dart';
 import 'features/grading/controller/submission_controller.dart';
 import 'data/scanning/native_cv_bindings.dart';
 import 'data/scanning/cv_engine_service.dart';
-import 'data/scanning/model_path_service.dart';
+import 'data/scanning/model_path_service.dart' show PipelinePathService;
 import 'data/connection/websocket_client.dart';
 import 'data/auth/credentials_cache.dart';
 import 'data/session/session_cache_manager.dart';
@@ -67,7 +67,7 @@ class _NexusEdgeAppState extends State<NexusEdgeApp> {
         ),
         Provider<CredentialsRepository>(create: (_) => CredentialsCache()),
         Provider<SessionCacheRepository>(create: (_) => SessionCacheManager()),
-        Provider<ModelPathRepository>(create: (_) => ModelPathService()),
+        Provider<ModelPathRepository>(create: (_) => PipelinePathService()),
         Provider<ScanEngineRepository>(
           create: (context) => CvEngineService(context.read<LogRepository>()),
         ),

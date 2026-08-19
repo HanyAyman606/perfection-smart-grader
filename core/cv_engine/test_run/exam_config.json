@@ -1,0 +1,8 @@
+{
+  "exam_id": "exam_2026_08_19_001",
+  "model_path": "D:\\final_pipeline\\shamel.onnx",
+  "exam_type": "quiz",
+  "num_questions": 15,
+  "id_letters": "CDEFMW",
+  "id_digit_cols": 3
+}

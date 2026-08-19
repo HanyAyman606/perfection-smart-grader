@@ -2,42 +2,51 @@ import 'dart:ffi';
 import 'dart:io';
 import 'package:ffi/ffi.dart';
 
-// Matches include/ffi.h exactly:
-//   const char* process_exam_in_memory(const char* image_path, const char* config_json);
-//   void free_string(char* str);
-typedef _ProcessExamC = Pointer<Utf8> Function(Pointer<Utf8> imagePath, Pointer<Utf8> configJson);
-typedef _ProcessExamDart = Pointer<Utf8> Function(Pointer<Utf8> imagePath, Pointer<Utf8> configJson);
+// Matches include/ffi_api.h exactly:
+//   int run_exam_pipeline(const char* image_path, const char* config_path,
+//                         const char* output_dir, const char* bin_dir);
+//
+// Returns 0 = success, 1 = invalid arguments, 2 = pipeline failure.
+// Nothing is malloc'd by the native side — no free_string needed.
+typedef _RunPipelineC = Int32 Function(
+  Pointer<Utf8> imagePath,
+  Pointer<Utf8> configPath,
+  Pointer<Utf8> outputDir,
+  Pointer<Utf8> binDir,
+);
+typedef _RunPipelineDart = int Function(
+  Pointer<Utf8> imagePath,
+  Pointer<Utf8> configPath,
+  Pointer<Utf8> outputDir,
+  Pointer<Utf8> binDir,
+);
 
-typedef _FreeStringC = Void Function(Pointer<Utf8> ptr);
-typedef _FreeStringDart = void Function(Pointer<Utf8> ptr);
-
-/// Isolate-safe wrapper is layered on top in cv_engine_service.dart (these
-/// blocking FFI calls must run via Dart's compute()/Isolate.run(), never
-/// directly on the UI isolate — YOLO inference is not instant on a phone).
+/// Isolate-safe wrapper layered on top in cv_engine_service.dart.
+/// Blocking FFI calls run via compute()/Isolate.run() — never on the
+/// UI isolate directly.
 class NativeCvBindings {
   static NativeCvBindings? _instance;
   static NativeCvBindings get instance => _instance!;
 
   late final DynamicLibrary _lib;
-  late final _ProcessExamDart _processExam;
-  late final _FreeStringDart _freeString;
+  late final _RunPipelineDart _runPipeline;
 
   NativeCvBindings._(this._lib) {
-    _processExam = _lib.lookupFunction<_ProcessExamC, _ProcessExamDart>('process_exam_in_memory');
-    _freeString = _lib.lookupFunction<_FreeStringC, _FreeStringDart>('free_string');
+    _runPipeline = _lib.lookupFunction<_RunPipelineC, _RunPipelineDart>(
+      'run_exam_pipeline',
+    );
   }
 
   static String _resolveLibName() {
-    if (Platform.isWindows) return 'ai_corrector.dll';
-    if (Platform.isMacOS) return 'libai_corrector.dylib';
-    if (Platform.isLinux || Platform.isAndroid) return 'libai_corrector.so';
+    if (Platform.isWindows) return 'exam_scanner_ffi.dll';
+    if (Platform.isMacOS) return 'libexam_scanner_ffi.dylib';
+    if (Platform.isLinux || Platform.isAndroid) return 'libexam_scanner_ffi.so';
     throw UnsupportedError('Unsupported platform for native CV engine.');
   }
 
   /// Returns null on success, error string on failure. Call once at
-  /// startup on the main isolate — forces resolution of all exported
-  /// symbols so a stale/incomplete native library is caught here, not on
-  /// first scan.
+  /// startup on the main isolate — forces resolution of the exported symbol
+  /// so a stale/incomplete native library is caught here, not on first scan.
   static String? probeAvailability() {
     try {
       final lib = DynamicLibrary.open(_resolveLibName());
@@ -51,30 +60,38 @@ class NativeCvBindings {
   /// compute()/Isolate.run() spawns a fresh isolate with its own memory
   /// space — the `_instance` set by probeAvailability() on the main
   /// isolate is NOT visible there. DynamicLibrary.open() is cheap and
-  /// idempotent at the OS level (the loader just returns the
-  /// already-mapped handle), so each background isolate calls this once
-  /// to get its own binding rather than sharing the main isolate's.
+  /// idempotent at the OS level, so each background isolate calls this once.
   static NativeCvBindings forCurrentIsolate() {
     final lib = DynamicLibrary.open(_resolveLibName());
     return NativeCvBindings._(lib);
   }
 
-  /// Single-call pipeline: perspective-correct, crop panels, run YOLO
-  /// inference, and score — all in one native call. Returns a JSON string
-  /// containing both the quality/confidence signal and the full grading
-  /// result. Always run this via compute()/Isolate.run() — see
-  /// cv_engine_service.dart.
-  String callProcessExam(String imagePath, String configJson) {
-    final cImagePath = imagePath.toNativeUtf8();
-    final cConfigJson = configJson.toNativeUtf8();
-    Pointer<Utf8>? resultPtr;
+  /// Launches the 6-stage pipeline as subprocesses and waits for completion.
+  ///
+  /// Returns:
+  ///   0 — success; results written to `outputDir/<imageStem>/stage6/summary.json`
+  ///   1 — invalid arguments (missing paths)
+  ///   2 — pipeline failure (one of the stage binaries exited non-zero)
+  ///
+  /// Always run this via compute()/Isolate.run() — it blocks while the
+  /// C++ side shells out to 6 separate executables (can take several seconds).
+  int callRunPipeline({
+    required String imagePath,
+    required String configPath,
+    required String outputDir,
+    required String binDir,
+  }) {
+    final cImagePath  = imagePath.toNativeUtf8();
+    final cConfigPath = configPath.toNativeUtf8();
+    final cOutputDir  = outputDir.toNativeUtf8();
+    final cBinDir     = binDir.toNativeUtf8();
     try {
-      resultPtr = _processExam(cImagePath, cConfigJson);
-      return resultPtr.toDartString();
+      return _runPipeline(cImagePath, cConfigPath, cOutputDir, cBinDir);
     } finally {
       malloc.free(cImagePath);
-      malloc.free(cConfigJson);
-      if (resultPtr != null) _freeString(resultPtr);
+      malloc.free(cConfigPath);
+      malloc.free(cOutputDir);
+      malloc.free(cBinDir);
     }
   }
 }

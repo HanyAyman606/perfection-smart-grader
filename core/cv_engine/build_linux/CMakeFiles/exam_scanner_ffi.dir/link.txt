@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC -O3 -DNDEBUG -shared -Wl,-soname,libexam_scanner_ffi.so -o libexam_scanner_ffi.so CMakeFiles/exam_scanner_ffi.dir/src/ffi_api.cpp.o 

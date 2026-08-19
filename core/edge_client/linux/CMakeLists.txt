@@ -126,3 +126,51 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# =============================================================================
+# cv_engine native library + stage executables
+# =============================================================================
+# The FFI library and the 6 stage binaries it shells out to must be installed
+# into the bundle so the app can find them at runtime. The .so goes into lib/
+# (already on the RPATH "$ORIGIN/lib"). The stage executables go next to the
+# main binary so PipelinePathService can resolve them via
+# File(Platform.resolvedExecutable).parent.
+#
+# CV_ENGINE_BUILD_DIR can be overridden at configure time:
+#   cmake -DCV_ENGINE_BUILD_DIR=/path/to/build_linux ..
+# Default: the checked-in build_linux output relative to this CMakeLists.
+set(CV_ENGINE_BUILD_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../native_cv/../../../cv_engine/build_linux"
+  CACHE PATH "Path to the cv_engine build output directory")
+
+if(EXISTS "${CV_ENGINE_BUILD_DIR}/libexam_scanner_ffi.so")
+  install(FILES "${CV_ENGINE_BUILD_DIR}/libexam_scanner_ffi.so"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+else()
+  message(WARNING
+    "cv_engine: libexam_scanner_ffi.so not found at ${CV_ENGINE_BUILD_DIR}. "
+    "Run 'cmake --build cv_engine/build_linux' first.")
+endif()
+
+foreach(STAGE_BIN stage1_boxes stage2_warp stage3_orient stage4_final stage5_inference stage6_scoring)
+  if(EXISTS "${CV_ENGINE_BUILD_DIR}/${STAGE_BIN}")
+    install(PROGRAMS "${CV_ENGINE_BUILD_DIR}/${STAGE_BIN}"
+      DESTINATION "${CMAKE_INSTALL_PREFIX}"
+      COMPONENT Runtime)
+  else()
+    message(WARNING "cv_engine: stage binary '${STAGE_BIN}' not found at ${CV_ENGINE_BUILD_DIR}.")
+  endif()
+endforeach()
+
+# Copy shamel.onnx (the bubble-detection model) next to the executable as well,
+# because ffi_api.cpp resolves it relative to bin_dir by default.
+# The Dart side also copies it to app support, but having it in bin_dir avoids
+# the model_path field in exam_config.json having to be an absolute path.
+if(EXISTS "${CV_ENGINE_BUILD_DIR}/../models/shamel.onnx")
+  install(FILES "${CV_ENGINE_BUILD_DIR}/../models/shamel.onnx"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    COMPONENT Runtime)
+else()
+  message(WARNING "cv_engine: shamel.onnx not found — check cv_engine/models/.")
+endif()

@@ -1,4 +1,0 @@
-/home/eyad-amr/Desktop/perfection/core/edge_client/native_cv/build_android/CMakeFiles/omr_cli.dir
-/home/eyad-amr/Desktop/perfection/core/edge_client/native_cv/build_android/CMakeFiles/omr_engine.dir
-/home/eyad-amr/Desktop/perfection/core/edge_client/native_cv/build_android/CMakeFiles/edit_cache.dir
-/home/eyad-amr/Desktop/perfection/core/edge_client/native_cv/build_android/CMakeFiles/rebuild_cache.dir

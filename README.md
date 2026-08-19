@@ -92,7 +92,7 @@ cmake --build . --config Release
 ### 3. Edge Client (Flutter Mobile App)
 Requires the Flutter SDK.
 1. Place the compiled CV Engine native library (`libai_corrector.so` for Android, `.dylib` for iOS/macOS, `.dll` for Windows) into the appropriate Flutter platform directory (e.g., `android/app/src/main/jniLibs/`).
-2. Ensure the `bubble.onnx` model is located at `core/edge_client/assets/models/bubble.onnx`.
+2. Ensure the `shamel.onnx` model is located at `core/edge_client/assets/models/shamel.onnx`.
 3. Build and run:
 ```bash
 cd core/edge_client
