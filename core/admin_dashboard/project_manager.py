@@ -23,11 +23,12 @@ from admin_dashboard.recent_projects import recent_projects
 from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY, get_mode_by_id
 from admin_dashboard.group_registry import group_registry
 from admin_dashboard.roster_repository import RosterRepository
+from admin_dashboard.blueprint_layout_engine import BlueprintLayoutEngine
+from admin_dashboard.sync_packet_builder import SyncPacketBuilder
 
 
 CONFIG_FILENAME = "smart_grader.json"
 DB_FILENAME = "roster.db"
-MCQ_LAYOUT_COLS = 3  # bubble sheet studio always spreads MCQs across 3 columns
 
 
 class ProjectManager:
@@ -106,40 +107,19 @@ class ProjectManager:
         )
 
     @staticmethod
-    def compute_mcq_column_layout(mcq_count: int, num_cols: int = MCQ_LAYOUT_COLS) -> dict:
-        """Mirrors the Bubble Sheet Studio's column-split math exactly
-        (col1 = ceil(n/3), col2 = ceil(remaining/2), col3 = whatever is
-        left), generalized to any column count: each column takes the
-        ceiling of the questions still remaining divided by the columns
-        still left, so the studio's 3-column formula falls out as the
-        default case. Returns e.g. {"num_cols": 3, "columns": {"1": 9,
-        "2": 8, "3": 8}} for 25 questions."""
-        remaining = max(0, mcq_count)
-        cols_left = max(1, num_cols)
-        columns = {}
-        for i in range(1, num_cols + 1):
-            n = -(-remaining // cols_left)  # ceil division
-            columns[str(i)] = n
-            remaining -= n
-            cols_left -= 1
-        return {"num_cols": num_cols, "columns": columns}
+    def compute_mcq_column_layout(mcq_count: int, num_cols: int = 3) -> dict:
+        """Thin delegate — see BlueprintLayoutEngine.compute_even_split()
+        for the actual algorithm/rationale. Kept here under the original
+        name/signature so existing call sites (e.g. model_answer_page.py
+        calling self.project_manager.compute_mcq_column_layout(...))
+        don't need to change."""
+        return BlueprintLayoutEngine.compute_even_split(mcq_count, num_cols)
 
     @staticmethod
     def compute_mcq_column_layout_fixed(mcq_count: int, num_cols: int = 6, col_size: int = 10) -> dict:
-        """Shamel mode's column layout: fill each column to `col_size`
-        questions before starting the next one, left to right — NOT an
-        even split like compute_mcq_column_layout(). For 44 questions
-        across 6 columns of 10: {"1": 10, "2": 10, "3": 10, "4": 10,
-        "5": 4, "6": 0}. Any column beyond what's needed is explicitly
-        0, not omitted, so the mobile client can always expect exactly
-        `num_cols` keys."""
-        remaining = max(0, mcq_count)
-        columns = {}
-        for i in range(1, num_cols + 1):
-            n = min(col_size, remaining)
-            columns[str(i)] = n
-            remaining -= n
-        return {"num_cols": num_cols, "columns": columns}
+        """Thin delegate — see BlueprintLayoutEngine.compute_fixed_fill()
+        for the actual algorithm/rationale."""
+        return BlueprintLayoutEngine.compute_fixed_fill(mcq_count, num_cols, col_size)
 
     def save_model_answers(self, answers_by_version: dict[str, dict], voided_by_version: dict[str, list]):
         """answers_by_version / voided_by_version are keyed by version label
@@ -187,35 +167,12 @@ class ProjectManager:
     # Sync packet sent to mobile clients over the socket
     # ------------------------------------------------------------------
     def build_sync_packet(self, group_name: str) -> dict:
+        """Thin delegate — see SyncPacketBuilder.build() for the actual
+        packet-shaping logic. Loading the config is still this class's
+        job (that's the file I/O ProjectManager owns); shaping it into
+        the wire format is SyncPacketBuilder's."""
         exam_config = self.load_config()
-        mode_id = exam_config.get("mode", DEFAULT_MODE_ID)
-        exam_mode = get_mode_by_id(mode_id)
-        mcq_count = exam_config.get("mcq_count", 0)
-
-        if exam_mode.has_answer_versions:
-            mcq_columns = self.compute_mcq_column_layout_fixed(mcq_count, num_cols=6, col_size=10)
-        else:
-            mcq_columns = self.compute_mcq_column_layout(mcq_count)
-
-        return {
-            "exam_name": exam_config.get("project_name", self.project_name),
-            "exam_mode": mode_id,
-            "mcq_count": mcq_count,
-            "mcq_ranges": exam_config.get("mcq_ranges", []),
-            "has_essays": exam_config.get("has_essays", False),
-            "essay_points_map": exam_config.get("essay_points_map", {}),
-            "group_name": group_name,
-            "answer_versions": exam_config.get("answer_versions", [SINGLE_VERSION_KEY]),
-            "model_answers": exam_config.get("model_answers", {}),  # {version: {"1": "A", ...}}
-            "voided_questions": exam_config.get("voided_questions", {}),  # {version: [q, ...]}
-            "choices_per_question": exam_config.get("choices_per_question", 4),
-            "mcq_columns": mcq_columns,  # {"num_cols": n, "columns": {"1": n, ...}}
-            "id": {
-                "num_digits": exam_mode.id_digit_count,  # derived from mode, not saved
-                "num_letters": len(exam_config.get("id_letters", "CDEFMW")),
-                "letters": list(exam_config.get("id_letters", "CDEFMW")),
-            },
-        }
+        return SyncPacketBuilder.build(exam_config, group_name, fallback_project_name=self.project_name)
 
     def get_session_password(self) -> str:
         return self.load_config().get("session_password", "12345678")

@@ -51,7 +51,7 @@ Then per sale:
 python3 tools/generate_license.py --licensee "Buyer Name" --out license.lic
 ```
 
-Ship the buyer: the compiled binary from `dist/` + their `license.lic`.
+Ship the buyer: the compiled binary from `dist/` + their `admin_dashboard/license.lic`.
 Never ship `tools/`, `private_key.pem`, or any `.py` source.
 
 See `tools/generate_license.py --help` for expiring or machine-locked

@@ -5,12 +5,13 @@ Themed replacement for QInputDialog.getText() when creating a group —
 matches the app's card/input language instead of the OS-native dialog.
 """
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, TEXT_FEED, NEON_PINK, BG_PANEL, TRUE_AZURE
 from admin_dashboard.widgets.common import apply_card_shadow
+from admin_dashboard.widgets.styled import make_title_label, make_outline_button
 
 
 class NewGroupDialog(QDialog):
@@ -25,10 +26,7 @@ class NewGroupDialog(QDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(30, 26, 30, 26)
 
-        title_label = QLabel(title.upper())
-        title_label.setFont(QFont(orbitron, 14, QFont.Weight.Black))
-        title_label.setStyleSheet(f"color: {SKY_AQUA}; letter-spacing: 1px;")
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label = make_title_label(title.upper(), orbitron, SKY_AQUA, font_size=14)
         layout.addWidget(title_label)
 
         hint = QLabel("GROUP IDENTIFIER (e.g., Sidi Bishr 10 AM):")
@@ -50,28 +48,10 @@ class NewGroupDialog(QDialog):
         layout.addWidget(self.name_input)
 
         btn_row = QHBoxLayout()
-        btn_cancel = QPushButton("✕ CANCEL")
-        btn_cancel.setFont(QFont(orbitron, 10, QFont.Weight.Bold))
-        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_cancel.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {TEXT_MUTED};
-                border: 2px solid {TEXT_MUTED}; border-radius: 8px; padding: 12px;
-            }}
-            QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; }}
-        """)
+        btn_cancel = make_outline_button("✕ CANCEL", orbitron, TEXT_MUTED)
         btn_cancel.clicked.connect(self.reject)
 
-        btn_ok = QPushButton("✔ CREATE")
-        btn_ok.setFont(QFont(orbitron, 10, QFont.Weight.Bold))
-        btn_ok.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_ok.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {SKY_AQUA};
-                border: 2px solid {SKY_AQUA}; border-radius: 8px; padding: 12px;
-            }}
-            QPushButton:hover {{ background-color: {SKY_AQUA}; color: #ffffff; }}
-        """)
+        btn_ok = make_outline_button("✔ CREATE", orbitron, SKY_AQUA)
         btn_ok.clicked.connect(self.accept)
 
         btn_row.addWidget(btn_cancel)

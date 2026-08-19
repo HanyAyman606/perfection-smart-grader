@@ -8,11 +8,12 @@ ProjectManager.get_session_password()/set_session_password(), so
 different exams can use different session passwords if desired.
 """
 
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, NEON_PINK, BG_PANEL, TRUE_AZURE, WARN_COLOR, INPUT_STYLE
+from admin_dashboard.widgets.styled import make_title_label, make_outline_button
 
 MIN_SESSION_PASSWORD_LENGTH = 4
 
@@ -29,10 +30,7 @@ class SessionPasswordDialog(QDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(30, 26, 30, 26)
 
-        title = QLabel("PHONE SESSION PASSWORD")
-        title.setFont(QFont(orbitron, 14, QFont.Weight.Black))
-        title.setStyleSheet(f"color: {SKY_AQUA}; letter-spacing: 1px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title = make_title_label("PHONE SESSION PASSWORD", orbitron, SKY_AQUA, font_size=14)
         layout.addWidget(title)
 
         subtitle = QLabel("This is what proctors type into the mobile app to connect \u2014 separate from your admin login password.")
@@ -54,16 +52,7 @@ class SessionPasswordDialog(QDialog):
         self.error_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.error_lbl)
 
-        btn_save = QPushButton("SAVE PASSWORD")
-        btn_save.setFont(QFont(orbitron, 11, QFont.Weight.Bold))
-        btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_save.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {NEON_PINK};
-                border: 2px solid {NEON_PINK}; border-radius: 8px; padding: 12px;
-            }}
-            QPushButton:hover {{ background-color: {NEON_PINK}; color: #ffffff; }}
-        """)
+        btn_save = make_outline_button("SAVE PASSWORD", orbitron, NEON_PINK, font_size=11)
         btn_save.clicked.connect(self._save)
         layout.addWidget(btn_save)
 

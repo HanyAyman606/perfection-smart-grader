@@ -6,9 +6,9 @@ the sidebar nav button, the stat card, the faint grid background, and the
 CRT scanline overlay.
 """
 
-from PySide6.QtWidgets import QWidget, QPushButton, QFrame, QLabel, QVBoxLayout, QSizePolicy
+from PySide6.QtWidgets import QWidget, QPushButton, QFrame, QLabel, QVBoxLayout, QSizePolicy, QGraphicsDropShadowEffect
 from PySide6.QtCore import Qt
-from PySide6.QtGui import  QPainter, QFont, QPen, QBrush
+from PySide6.QtGui import QPainter, QFont, QPen, QBrush, QColor
 
 from admin_dashboard.theme import (
     NEON_PINK, CLOUDY_SKY, PERSIAN_BLUE, TEXT_MUTED, BG_CARD, BG_PANEL, TRUE_AZURE, VIVID_ROYAL
@@ -236,9 +236,6 @@ def make_tool_button(text: str, color: str, orbitron_family: str) -> QPushButton
         QPushButton:hover {{ background-color: {color}; color: #000000; }}
     """)
     return btn
-
-from PySide6.QtWidgets import QGraphicsDropShadowEffect
-from PySide6.QtGui import QColor
 
 
 def apply_card_shadow(widget, color="#94a3b8", blur=24, y_offset=6, alpha=90):

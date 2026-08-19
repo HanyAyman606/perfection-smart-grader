@@ -17,6 +17,7 @@ from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, NEON_PINK, BG_PANEL, BG_CARD, TRUE_AZURE, WARN_COLOR, CLOUDY_SKY,TEXT_FEED
 from admin_dashboard.widgets.common import apply_card_shadow
+from admin_dashboard.widgets.styled import make_outline_button, make_title_label
 
 
 class ThemedFileBrowserDialog(QDialog):
@@ -52,13 +53,7 @@ class ThemedFileBrowserDialog(QDialog):
         layout.addWidget(title_lbl)
 
         nav_row = QHBoxLayout()
-        btn_up = QPushButton("⬆ UP")
-        btn_up.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_up.setStyleSheet(f"""
-            QPushButton {{ background-color: {BG_PANEL}; color: {TEXT_MUTED};
-            border: 2px solid {TEXT_MUTED}; border-radius: 6px; padding: 6px 12px; }}
-            QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; }}
-        """)
+        btn_up = make_outline_button("⬆ UP", self.font().family(), TEXT_MUTED, padding="6px 12px", radius=6)
         btn_up.clicked.connect(self._go_up)
         nav_row.addWidget(btn_up)
 
@@ -156,24 +151,11 @@ class ThemedFileBrowserDialog(QDialog):
             layout.addWidget(self.filename_input)
 
         btn_row = QHBoxLayout()
-        btn_cancel = QPushButton("✕ CANCEL")
-        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_cancel.setStyleSheet(f"""
-            QPushButton {{ background-color: {BG_PANEL}; color: {TEXT_MUTED};
-            border: 2px solid {TEXT_MUTED}; border-radius: 8px; padding: 12px; }}
-            QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; }}
-        """)
+        btn_cancel = make_outline_button("✕ CANCEL", self.font().family(), TEXT_MUTED)
         btn_cancel.clicked.connect(self.reject)
 
         confirm_label = {"open_file": "✔ OPEN", "save_file": "💾 SAVE", "select_directory": "✔ CHOOSE THIS FOLDER"}[mode]
-        self.btn_confirm = QPushButton(confirm_label)
-        self.btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_confirm.setStyleSheet(f"""
-            QPushButton {{ background-color: {BG_PANEL}; color: {SKY_AQUA};
-            border: 2px solid {SKY_AQUA}; border-radius: 8px; padding: 12px; }}
-            QPushButton:hover {{ background-color: {SKY_AQUA}; color: #ffffff; }}
-            QPushButton:disabled {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; border-color: {TEXT_MUTED}; }}
-        """)
+        self.btn_confirm = make_outline_button(confirm_label, self.font().family(), SKY_AQUA)
         self.btn_confirm.clicked.connect(self._confirm)
         self._update_confirm_enabled()
 
@@ -294,10 +276,7 @@ class _ThemedMessageDialog(QDialog):
         layout.setSpacing(16)
         layout.setContentsMargins(30, 26, 30, 26)
 
-        title_lbl = QLabel(title.upper())
-        title_lbl.setFont(QFont(orbitron, 14, QFont.Weight.Black))
-        title_lbl.setStyleSheet(f"color: {accent}; letter-spacing: 1px;")
-        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_lbl = make_title_label(title.upper(), orbitron, accent, font_size=14)
         layout.addWidget(title_lbl)
 
         msg_lbl = QLabel(message)
@@ -309,25 +288,11 @@ class _ThemedMessageDialog(QDialog):
 
         btn_row = QHBoxLayout()
         if confirm_mode:
-            btn_no = QPushButton("✕ CANCEL")
-            btn_no.setFont(QFont(orbitron, 10, QFont.Weight.Bold))
-            btn_no.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_no.setStyleSheet(f"""
-                QPushButton {{ background-color: {BG_PANEL}; color: {TEXT_MUTED};
-                border: 2px solid {TEXT_MUTED}; border-radius: 8px; padding: 12px; }}
-                QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; }}
-            """)
+            btn_no = make_outline_button("✕ CANCEL", orbitron, TEXT_MUTED)
             btn_no.clicked.connect(self.reject)
             btn_row.addWidget(btn_no)
 
-        btn_yes = QPushButton("✔ CONFIRM" if confirm_mode else "✔ OK")
-        btn_yes.setFont(QFont(orbitron, 10, QFont.Weight.Bold))
-        btn_yes.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_yes.setStyleSheet(f"""
-            QPushButton {{ background-color: {BG_PANEL}; color: {accent};
-            border: 2px solid {accent}; border-radius: 8px; padding: 12px; }}
-            QPushButton:hover {{ background-color: {accent}; color: #ffffff; }}
-        """)
+        btn_yes = make_outline_button("✔ CONFIRM" if confirm_mode else "✔ OK", orbitron, accent)
         btn_yes.clicked.connect(self.accept)
         btn_row.addWidget(btn_yes)
 
