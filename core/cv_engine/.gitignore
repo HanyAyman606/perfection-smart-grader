@@ -1,0 +1,5 @@
+results/
+third_party/
+build/
+*.ps1
+*.sh
