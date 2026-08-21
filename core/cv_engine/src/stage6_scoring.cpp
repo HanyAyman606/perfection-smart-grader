@@ -72,13 +72,20 @@ constexpr int CLS_CANCELED = 2;
 // TUNING: review_needed count strictly above this → global status "retake"
 constexpr int RETAKE_REVIEW_THRESHOLD = 3;
 
-// TUNING: MCQ panel geometry — expected left/right margin ratio.
-// If actual (left_margin / right_margin) > this, the extra bubble is on the LEFT.
-constexpr double EXTRA_BUBBLE_RATIO_MCQ = 1.5;
+// TUNING: MCQ panel geometry — at rest (correct bubble count), the left
+// margin (leftmost lane center -> column's LEFT WALL) is expected to be
+// about this many times the right margin (rightmost lane center -> column's
+// RIGHT WALL), since each row's "Qn." label eats into the left side of the
+// column but not the right. Only consulted when a row is over-detected:
+//   observed ratio < this  -> left margin has collapsed -> extra bubble is
+//                              on the LEFT (drop the leftmost lane)
+//   observed ratio >= this -> right margin has collapsed -> extra bubble is
+//                              on the RIGHT (drop the rightmost lane)
+constexpr double EXTRA_BUBBLE_RATIO_MCQ = 2.0;
 
 // TUNING: ID panel geometry — expected left/right margin ratio ≈ 1:1.
-// If actual ratio > this, extra bubble is on the LEFT.
-constexpr double EXTRA_BUBBLE_RATIO_ID = 1.5;
+// Same decision rule as EXTRA_BUBBLE_RATIO_MCQ above.
+constexpr double EXTRA_BUBBLE_RATIO_ID = 1.0;
 
 // TUNING: if num_choices >= this and 0 bubbles detected in a slot → noise,
 // silently skip (no question entry emitted).
@@ -89,6 +96,14 @@ constexpr int MIN_CHOICES_FOR_NOISE = 2;
 // TUNING: digit column y-alignment — slot cy deviation beyond this multiple
 // of row_pitch across columns is flagged as a mismatch.
 constexpr double DIGIT_ALIGN_TOLERANCE = 1.5;
+
+// TUNING: per-row distance-ratio dedup.
+// When a row has more detected boxes than expected choices, we sort them by cx
+// and look at consecutive gaps. If the smallest gap is less than this fraction
+// of the median gap, the two adjacent boxes are considered duplicates of the
+// same bubble slot. The lower-confidence one is dropped.
+// A value of 0.55 means: if any gap is < 55% of typical spacing → noise pair.
+constexpr double ROW_GAP_RATIO_THRESHOLD = 0.55;
 
 // ============================================================
 
@@ -286,8 +301,15 @@ double median_of(std::vector<double> v) {
 // =======================================================================
 // GEOMETRY FILTER — discard extra lanes using margin ratio rule.
 // Only called when detected lane count > target_count.
-// extra_ratio_threshold: actual (left_margin / right_margin) above this
-//   means the extra bubble is on the LEFT → discard leftmost lane.
+//
+// left_edge/right_edge MUST be a fixed physical wall (e.g. the column's
+// designed boundary), NOT derived from the same boxes being filtered —
+// otherwise the outermost box always defines its own "wall" and the
+// margin collapses to ~half a box-width regardless of whether it's noise.
+//
+// extra_ratio_threshold: the at-rest (correct-count) left/right margin
+//   ratio. observed ratio < this -> extra bubble is on the LEFT (its
+//   margin collapsed); observed ratio >= this -> extra is on the RIGHT.
 // =======================================================================
 void filter_extra_lanes(std::vector<std::vector<Box*>>& lanes,
                          double left_edge, double right_edge,
@@ -304,13 +326,101 @@ void filter_extra_lanes(std::vector<std::vector<Box*>>& lanes,
         double right_center = lane_center(lanes.back());
         double left_margin  = left_center - left_edge;
         double right_margin = right_edge - right_center;
+        if (left_margin  < 1.0) left_margin  = 1.0;
         if (right_margin < 1.0) right_margin = 1.0;
         double ratio = left_margin / right_margin;
 
-        if (ratio > extra_ratio_threshold)
-            lanes.erase(lanes.begin());  // extra on left
+        if (ratio < extra_ratio_threshold)
+            lanes.erase(lanes.begin());  // left margin collapsed -> extra on left
         else
-            lanes.pop_back();            // extra on right
+            lanes.pop_back();            // right margin collapsed -> extra on right
+    }
+}
+
+// =======================================================================
+// PER-ROW DISTANCE-RATIO DEDUP
+// When a row contains more detected boxes than expected choices we use two
+// complementary strategies:
+//
+// 1. Gap-ratio filter: sort by cx, find the pair with smallest consecutive
+//    gap. If min_gap / median_gap < ROW_GAP_RATIO_THRESHOLD the two boxes
+//    are near-duplicates of the same slot — drop the lower-score one.
+//
+// 2. Margin-to-wall ratio filter: if (1) didn't help (gaps are all roughly
+//    even, so there's no obvious duplicate pair — the extra bubble is a
+//    genuinely separate stray lane, typically at one end of the row), fall
+//    back to the same rule used column-wide in filter_extra_lanes: compare
+//    the leftmost bubble's distance to the column's LEFT WALL against the
+//    rightmost bubble's distance to the RIGHT WALL. At rest, left_margin /
+//    right_margin ≈ extra_ratio_threshold (2.0 for MCQ, since each row's
+//    "Qn." label eats into the left side of the column but not the right;
+//    1.0 for the ID panel, which is symmetric). Whichever side's margin
+//    has collapsed relative to that expected ratio is where the extra
+//    bubble sits, so that end box is dropped.
+//
+//    col_left/col_right MUST be the column's fixed physical wall (same
+//    values used for filter_extra_lanes), NOT derived from this row's own
+//    boxes — otherwise the outermost box always defines its own "wall" and
+//    the margin ratio collapses to ~1 regardless of whether it's noise.
+//
+// Both passes repeat until the row is down to num_options.
+// =======================================================================
+
+void dedup_row_by_gap_ratio(std::vector<Box*>& row, int num_options,
+                             const std::vector<double>& lane_centers,
+                             double col_left, double col_right,
+                             double extra_ratio_threshold) {
+    (void)lane_centers;  // kept in the signature for call-site compatibility
+
+    // ── Pass 1: gap-ratio ──────────────────────────────────────────────────
+    while (static_cast<int>(row.size()) > num_options) {
+        std::sort(row.begin(), row.end(),
+                  [](const Box* a, const Box* b) { return a->cx < b->cx; });
+
+        std::vector<double> gaps;
+        for (size_t i = 0; i + 1 < row.size(); ++i)
+            gaps.push_back(row[i + 1]->cx - row[i]->cx);
+
+        if (gaps.empty()) break;
+
+        std::vector<double> sorted_gaps = gaps;
+        std::sort(sorted_gaps.begin(), sorted_gaps.end());
+        double median_gap = sorted_gaps[sorted_gaps.size() / 2];
+        if (median_gap < 1.0) break;
+
+        int min_idx = static_cast<int>(
+            std::min_element(gaps.begin(), gaps.end()) - gaps.begin());
+        double min_gap = gaps[min_idx];
+
+        if (min_gap / median_gap >= ROW_GAP_RATIO_THRESHOLD) break;
+
+        Box* left  = row[min_idx];
+        Box* right = row[min_idx + 1];
+        if (left->score >= right->score)
+            row.erase(row.begin() + min_idx + 1);
+        else
+            row.erase(row.begin() + min_idx);
+    }
+
+    // ── Pass 2: margin-to-wall ratio drop ───────────────────────────────────
+    // Still over-count → the extra bubble is an isolated stray at one end
+    // (gap-ratio pass found no adjacent duplicate). Decide which end using
+    // the same wall-margin ratio rule as filter_extra_lanes, applied to
+    // this row's actual end boxes instead of column-wide lane groups.
+    while (static_cast<int>(row.size()) > num_options) {
+        std::sort(row.begin(), row.end(),
+                  [](const Box* a, const Box* b) { return a->cx < b->cx; });
+
+        double left_margin  = row.front()->cx - col_left;
+        double right_margin = col_right - row.back()->cx;
+        if (left_margin  < 1.0) left_margin  = 1.0;
+        if (right_margin < 1.0) right_margin = 1.0;
+        double ratio = left_margin / right_margin;
+
+        if (ratio < extra_ratio_threshold)
+            row.erase(row.begin());   // left margin collapsed -> extra on left
+        else
+            row.pop_back();           // right margin collapsed -> extra on right
     }
 }
 
@@ -396,13 +506,15 @@ McqResult process_mcq(std::vector<Box>& boxes,
             continue;
         }
 
-        // ── Column-local left/right edges for geometry filter ─────────────
-        double col_left  = std::numeric_limits<double>::max();
-        double col_right = std::numeric_limits<double>::lowest();
-        for (Box* b : valid_boxes) {
-            col_left  = std::min(col_left,  b->x1);
-            col_right = std::max(col_right, b->x2);
-        }
+        // ── Column-local left/right WALLS for geometry filter ──────────────
+        // Fixed physical boundary of this column, derived from the panel-wide
+        // edges (aggregated over every box on the whole MCQ image, so one
+        // noisy row can't skew it) split evenly by column index. Deliberately
+        // NOT taken from valid_boxes here — that would make each lane define
+        // its own wall and collapse the margin ratio to ~1 regardless of
+        // whether a lane is genuine or noise (see filter_extra_lanes above).
+        double col_left  = panel_left + col_idx * col_w_approx;
+        double col_right = col_left + col_w_approx;
 
         // ── Establish X-lanes (A, B, C, D, ...) ──────────────────────────
         auto lanes = split_by_biggest_gaps(
@@ -463,15 +575,47 @@ McqResult process_mcq(std::vector<Box>& boxes,
 
             auto& row = valid_clusters[row_idx];
 
-            // Assign each detected box to the nearest lane
+            // ── Per-row distance-ratio dedup ──────────────────────────────
+            // If the model detected more boxes in this row than expected choices,
+            // use cx-gap analysis + lane-outlier drop to remove the noise box.
+            if (static_cast<int>(row.size()) > num_options)
+                dedup_row_by_gap_ratio(row, num_options, lane_centers,
+                                       col_left, col_right,
+                                       EXTRA_BUBBLE_RATIO_MCQ);
+
+            // Assign each detected box to the nearest lane,
+            // but first establish lane grid bounds so we can reject strays.
+            double lane_pitch = 0;
+            double lane_grid_left  = 0;
+            double lane_grid_right = std::numeric_limits<double>::max();
+            if (lane_centers.size() >= 2) {
+                std::vector<double> lc_sorted = lane_centers;
+                std::sort(lc_sorted.begin(), lc_sorted.end());
+                std::vector<double> lc_gaps_row;
+                for (size_t i = 0; i + 1 < lc_sorted.size(); ++i)
+                    lc_gaps_row.push_back(lc_sorted[i + 1] - lc_sorted[i]);
+                std::sort(lc_gaps_row.begin(), lc_gaps_row.end());
+                lane_pitch = lc_gaps_row[lc_gaps_row.size() / 2];
+                // A box is in-grid if it falls within half a pitch of the outermost lanes.
+                lane_grid_left  = lc_sorted.front() - lane_pitch * 0.5;
+                lane_grid_right = lc_sorted.back()  + lane_pitch * 0.5;
+            }
+
             std::vector<std::string> filled_opts, review_opts;
             for (Box* b : row) {
+                // Guard: if this box is outside the established lane grid entirely,
+                // it's a stray smudge / noise outside the bubble columns — skip it.
+                if (lane_pitch > 0 &&
+                    (b->cx < lane_grid_left || b->cx > lane_grid_right))
+                    continue;
+
                 int lane_idx = 0;
                 double best_d = std::numeric_limits<double>::infinity();
                 for (size_t li = 0; li < lane_centers.size(); ++li) {
                     double d = std::abs(b->cx - lane_centers[li]);
                     if (d < best_d) { best_d = d; lane_idx = static_cast<int>(li); }
                 }
+
                 const std::string& opt = mcq_options[lane_idx];
 
                 switch (b->status) {
@@ -554,6 +698,7 @@ McqResult process_mcq(std::vector<Box>& boxes,
 struct IdResult {
     std::string id_string;
     std::vector<std::string> mismatch_causes;
+    std::vector<std::string> id_errors;
     ojson review_flags  = ojson::array();
 };
 
@@ -658,25 +803,28 @@ IdResult process_id(std::vector<Box>& boxes, const examcfg::ExamConfig& config) 
         }
 
         // ── Determine column result ───────────────────────────────────────
-        if (!review_vals.empty()) {
+        std::vector<std::string> candidates = filled_vals;
+        candidates.insert(candidates.end(), review_vals.begin(), review_vals.end());
+
+        if (candidates.empty()) {
+            id_result += "-";
+            out.id_errors.push_back(is_letter_col ? "id_letter_blank" : "id_digit_blank");
+        } else if (candidates.size() > 1) {
             id_result += "?";
             ojson rf;
             rf["column"] = col_idx;
-            std::vector<std::string> candidates = filled_vals;
-            candidates.insert(candidates.end(),
-                              review_vals.begin(), review_vals.end());
             rf["candidates"] = candidates;
             out.review_flags.push_back(rf);
-        } else if (filled_vals.size() == 1) {
-            id_result += filled_vals[0];
-        } else if (filled_vals.size() > 1) {
+            
+            out.id_errors.push_back(is_letter_col ? "id_letter_multiple" : "id_digit_multiple");
+        } else if (!review_vals.empty()) {
             id_result += "?";
             ojson rf;
-            rf["column"]     = col_idx;
-            rf["candidates"] = filled_vals;
+            rf["column"] = col_idx;
+            rf["candidates"] = candidates;
             out.review_flags.push_back(rf);
         } else {
-            id_result += "-";
+            id_result += filled_vals[0];
         }
     }  // end column loop
 
@@ -784,6 +932,7 @@ int main(int argc, char** argv) {
             // we use these fields directly)
             sheet["_review_count"] = 0;
             sheet["_mismatch_causes"] = ojson::array();
+            sheet["_id_errors"] = ojson::array();
             sheets[base_filename]  = sheet;
         }
         ojson& sheet = sheets[base_filename];
@@ -816,6 +965,10 @@ int main(int argc, char** argv) {
                 sheet["_mismatch_causes"].push_back(mc);
             }
 
+            for (const auto& err : r.id_errors) {
+                sheet["_id_errors"].push_back(err);
+            }
+
             for (auto& rf : r.review_flags) {
                 ojson entry;
                 entry["panel"] = "ID";
@@ -833,16 +986,34 @@ int main(int argc, char** argv) {
 
         int   review_count  = sheet["_review_count"].get<int>();
         auto  mcauses       = sheet["_mismatch_causes"];
+        auto  id_errors     = sheet["_id_errors"];
 
         std::string gstatus;
+        // Sort and unique the mismatch_causes array
+        std::vector<std::string> unique_mcauses = mcauses.get<std::vector<std::string>>();
+        std::sort(unique_mcauses.begin(), unique_mcauses.end());
+        unique_mcauses.erase(std::unique(unique_mcauses.begin(), unique_mcauses.end()), unique_mcauses.end());
+        
+        // Sort and unique the id_errors array
+        std::vector<std::string> unique_id_errors = id_errors.get<std::vector<std::string>>();
+        std::sort(unique_id_errors.begin(), unique_id_errors.end());
+        unique_id_errors.erase(std::unique(unique_id_errors.begin(), unique_id_errors.end()), unique_id_errors.end());
+
         ojson gcause = ojson(nullptr);
 
-        if (!mcauses.empty()) {
+        if (!unique_mcauses.empty()) {
             gstatus = "number_mismatch";
-            if (mcauses.size() == 1) {
-                gcause = mcauses[0];
+            if (unique_mcauses.size() == 1) {
+                gcause = unique_mcauses[0];
             } else {
-                gcause = mcauses;
+                gcause = unique_mcauses;
+            }
+        } else if (!unique_id_errors.empty()) {
+            gstatus = "invalid_id";
+            if (unique_id_errors.size() == 1) {
+                gcause = unique_id_errors[0];
+            } else {
+                gcause = unique_id_errors;
             }
         } else if (review_count > RETAKE_REVIEW_THRESHOLD) {
             gstatus = "retake";
@@ -861,6 +1032,7 @@ int main(int argc, char** argv) {
         // Remove internal tracking keys
         sheet.erase("_review_count");
         sheet.erase("_mismatch_causes");
+        sheet.erase("_id_errors");
     }
 
     // ── Write final JSON ──────────────────────────────────────────────────

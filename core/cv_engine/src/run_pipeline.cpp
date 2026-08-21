@@ -82,21 +82,46 @@ void print_flags(const fs::path& work_dir) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <image_path> <config_path> [output_dir]\n";
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " [<image_path>] <config_path> [output_dir]\n";
         return 1;
     }
 
-    fs::path image_path = fs::absolute(argv[1]);
-    fs::path config_path = fs::absolute(argv[2]);
-    fs::path output_dir = argc > 3 ? fs::absolute(argv[3]) : fs::current_path() / "results";
-
-    if (!fs::exists(image_path)) {
-        std::cerr << "Error: Image not found at " << image_path << "\n";
-        return 1;
+    fs::path image_path, config_path, output_dir;
+    
+    std::string arg1 = argv[1];
+    // If the first argument is a json file, assume it's the config
+    if (arg1.size() > 5 && arg1.substr(arg1.size() - 5) == ".json") {
+        config_path = fs::absolute(arg1);
+        output_dir = argc > 2 ? fs::absolute(argv[2]) : fs::current_path() / "results";
+    } else {
+        if (argc < 3) {
+            std::cerr << "Usage: " << argv[0] << " <image_path> <config_path> [output_dir]\n";
+            return 1;
+        }
+        image_path = fs::absolute(argv[1]);
+        config_path = fs::absolute(argv[2]);
+        output_dir = argc > 3 ? fs::absolute(argv[3]) : fs::current_path() / "results";
     }
+
     if (!fs::exists(config_path)) {
         std::cerr << "Error: Config not found at " << config_path << "\n";
+        return 1;
+    }
+
+    // Parse config to find model_path and potentially image_path
+    std::ifstream cfg_file(config_path);
+    json cfg_json;
+    if (cfg_file) {
+        cfg_file >> cfg_json;
+    }
+
+    if (image_path.empty() && cfg_json.contains("image_path")) {
+        image_path = fs::absolute(cfg_json["image_path"].get<std::string>());
+    }
+
+    if (image_path.empty() || !fs::exists(image_path)) {
+        std::cerr << "Error: Image not found at " << image_path << "\n";
         return 1;
     }
 
@@ -116,12 +141,7 @@ int main(int argc, char** argv) {
     fs::copy_file(image_path, work_dir / "input" / image_path.filename(), fs::copy_options::overwrite_existing, ec);
     fs::copy_file(config_path, work_dir / "exam_config.json", fs::copy_options::overwrite_existing, ec);
 
-    // Parse config to find model_path
-    std::ifstream cfg_file(work_dir / "exam_config.json");
-    json cfg_json;
-    if (cfg_file) {
-        cfg_file >> cfg_json;
-    }
+    // Use previously parsed config to find model_path
     std::string model_rel = cfg_json.value("model_path", "shamel.onnx");
     fs::path model_p(model_rel);
 

@@ -35,15 +35,33 @@ int run_stage_ffi(const fs::path& bin_dir, const std::string& stage, const fs::p
 extern "C" {
 
 FFI_EXPORT int run_exam_pipeline(const char* image_path_c, const char* config_path_c, const char* output_dir_c, const char* bin_dir_c) {
-    if (!image_path_c || !config_path_c || !output_dir_c || !bin_dir_c) return 1;
+    if (!config_path_c || !output_dir_c || !bin_dir_c) return 1;
 
-    fs::path image_path = fs::absolute(image_path_c);
     fs::path config_path = fs::absolute(config_path_c);
     fs::path output_dir = fs::absolute(output_dir_c);
     fs::path bin_dir = fs::absolute(bin_dir_c);
 
-    if (!fs::exists(image_path) || !fs::exists(config_path)) {
-        std::cerr << "[FFI] Error: Input image or config does not exist.\n";
+    if (!fs::exists(config_path)) {
+        std::cerr << "[FFI] Error: Config does not exist.\n";
+        return 1;
+    }
+
+    std::ifstream cfg_file(config_path);
+    nlohmann::json cfg_json;
+    if (cfg_file) cfg_file >> cfg_json;
+
+    fs::path image_path;
+    if (cfg_json.contains("image_path")) {
+        image_path = fs::absolute(cfg_json["image_path"].get<std::string>());
+    } else if (image_path_c && std::strlen(image_path_c) > 0) {
+        image_path = fs::absolute(image_path_c);
+    } else {
+        std::cerr << "[FFI] Error: No image path provided in config or args.\n";
+        return 1;
+    }
+
+    if (!fs::exists(image_path)) {
+        std::cerr << "[FFI] Error: Input image does not exist: " << image_path << "\n";
         return 1;
     }
 
@@ -58,11 +76,6 @@ FFI_EXPORT int run_exam_pipeline(const char* image_path_c, const char* config_pa
     fs::copy_file(image_path, work_dir / "input" / image_path.filename(), fs::copy_options::overwrite_existing, ec);
     fs::copy_file(config_path, work_dir / "exam_config.json", fs::copy_options::overwrite_existing, ec);
 
-    std::ifstream cfg_file(work_dir / "exam_config.json");
-    nlohmann::json cfg_json;
-    if (cfg_file) {
-        cfg_file >> cfg_json;
-    }
     std::string model_rel = cfg_json.value("model_path", "shamel.onnx");
     fs::path model_p(model_rel);
 
