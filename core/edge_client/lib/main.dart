@@ -8,6 +8,7 @@ import 'domain/repositories/session_cache_repository.dart';
 import 'domain/repositories/scan_engine_repository.dart';
 import 'domain/repositories/model_path_repository.dart';
 import 'domain/repositories/log_repository.dart';
+import 'domain/repositories/offline_queue_repository.dart';
 import 'features/connection/controller/connection_controller.dart';
 import 'features/scanning/controller/scan_controller.dart';
 import 'features/grading/controller/submission_controller.dart';
@@ -15,11 +16,21 @@ import 'data/scanning/native_cv_bindings.dart';
 import 'data/scanning/cv_engine_service.dart';
 import 'data/scanning/model_path_service.dart' show PipelinePathService;
 import 'data/connection/websocket_client.dart';
+import 'data/queue/offline_queue_manager.dart';
+import 'data/queue/offline_sync_worker.dart';
 import 'data/auth/credentials_cache.dart';
 import 'data/session/session_cache_manager.dart';
 import 'features/connection/presentation/connection_screen.dart';
 import 'core/presentation/native_library_error_screen.dart';
 import 'core/logging/debug_log.dart';
+import 'features/grading/presentation/duplicate_resolution_dialog.dart';
+import 'domain/entities/exam_models.dart' show DuplicateAction, DuplicateComparison;
+
+/// How long the app tolerates being backgrounded (paused, not resumed)
+/// before it intentionally disconnects instead of holding a half-dead
+/// "connected" slot on the server. Tune here without touching the logic
+/// below. See connection_fix_plan.md Phase 3 for the rationale.
+const Duration kBackgroundGracePeriod = Duration(seconds: 90);
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -40,6 +51,36 @@ class NexusEdgeApp extends StatefulWidget {
 
 class _NexusEdgeAppState extends State<NexusEdgeApp> {
   final _navigatorKey = GlobalKey<NavigatorState>();
+
+  /// Backs OfflineSyncWorker's DuplicateResolver — shows the exact same
+  /// dialog the online submission flow uses (DuplicateResolutionDialog),
+  /// but from a background context with no widget of its own to anchor
+  /// to, hence going through _navigatorKey the same way LifecycleManager
+  /// already does for its own post-disconnect snackbar.
+  ///
+  /// Throws if there's genuinely nowhere to show it (app fully
+  /// backgrounded, no route mounted) — OfflineSyncWorker treats that
+  /// exactly like "no resolver available" and leaves the item safely
+  /// queued rather than guessing at an answer.
+  Future<DuplicateAction> _resolveDuplicateFromDialog(DuplicateComparison comparison) async {
+    final context = _navigatorKey.currentContext;
+    if (context == null) {
+      throw StateError('No navigator context available to show the duplicate dialog.');
+    }
+    final action = await showDialog<DuplicateAction>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DuplicateResolutionDialog(comparison: comparison),
+    );
+    if (action == null) {
+      // Dialog dismissed some other way than tapping a button (e.g. a
+      // system back gesture snuck past barrierDismissible: false on some
+      // platform) — treat as "couldn't get a decision," not as any one
+      // specific choice.
+      throw StateError('Duplicate dialog closed without a decision.');
+    }
+    return action;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,6 +112,28 @@ class _NexusEdgeAppState extends State<NexusEdgeApp> {
         Provider<ScanEngineRepository>(
           create: (context) => CvEngineService(context.read<LogRepository>()),
         ),
+        // Phase 5: local offline scan queue — sqflite-backed, see
+        // offline_queue_manager.dart. dispose() closes the DB + stream.
+        Provider<OfflineQueueRepository>(
+          create: (_) => OfflineQueueManager(),
+          dispose: (_, repo) => repo.dispose(),
+        ),
+        // Phase 5.6: watches for reconnects and drains the offline queue.
+        // `lazy: false` so it starts listening immediately at app launch
+        // rather than waiting for something to read it — nothing in the
+        // widget tree ever needs to read this provider directly, it just
+        // needs to exist and be running.
+        Provider<OfflineSyncWorker>(
+          lazy: false,
+          create: (context) => OfflineSyncWorker(
+            context.read<ConnectionRepository>(),
+            context.read<OfflineQueueRepository>(),
+            context.read<SessionCacheRepository>(),
+            log: context.read<LogRepository>(),
+            resolveDuplicate: _resolveDuplicateFromDialog,
+          )..start(),
+          dispose: (_, worker) => worker.dispose(),
+        ),
 
         // --- feature controllers, depending only on the interfaces above ---
         ChangeNotifierProvider<ConnectionController>(
@@ -91,6 +154,7 @@ class _NexusEdgeAppState extends State<NexusEdgeApp> {
             context.read<ConnectionRepository>(),
             context.read<SessionCacheRepository>(),
             context.read<ScanController>(),
+            context.read<OfflineQueueRepository>(),
           ),
         ),
       ],
@@ -123,6 +187,12 @@ class LifecycleManager extends StatefulWidget {
 
 class _LifecycleManagerState extends State<LifecycleManager> with WidgetsBindingObserver {
   StreamSubscription? _sessionEventSub;
+
+  // Phase 3: intentional background grace-period. Only ever started from
+  // the paused transition (see didChangeAppLifecycleState below), and only
+  // when a session is actually live — no point timing out a disconnect
+  // that's already disconnected.
+  Timer? _backgroundGraceTimer;
 
   @override
   void initState() {
@@ -162,20 +232,59 @@ class _LifecycleManagerState extends State<LifecycleManager> with WidgetsBinding
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _sessionEventSub?.cancel();
+    _backgroundGraceTimer?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     context.read<LogRepository>().log('LifecycleObserver', 'Transitioned to $state');
+
+    if (state == AppLifecycleState.paused) {
+      _startBackgroundGraceTimerIfNeeded();
+      return;
+    }
+
     if (state == AppLifecycleState.resumed) {
+      // Cancel any pending grace-period timeout — we're back before it fired.
+      _backgroundGraceTimer?.cancel();
+      _backgroundGraceTimer = null;
+
       final connection = Provider.of<ConnectionController>(context, listen: false);
+      // Unchanged from before Phase 3: still needed for the case where the
+      // OS/OEM killed the socket despite (or before) our grace period.
       if (connection.reconnectIfNecessary()) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Reconnecting...'), duration: Duration(seconds: 2)),
         );
       }
+      return;
     }
+
+    // .inactive and any other transient state: deliberately do nothing.
+    // Only a real paused→ transition starts the grace timer, so a brief
+    // inactive blip (e.g. a system dialog popping up) doesn't trigger it.
+  }
+
+  void _startBackgroundGraceTimerIfNeeded() {
+    // Already have one running (shouldn't normally happen — paused doesn't
+    // fire twice without a resumed in between — but guard anyway).
+    if (_backgroundGraceTimer != null) return;
+
+    final connection = Provider.of<ConnectionController>(context, listen: false);
+    // Only time out a disconnect if there's actually a live session to lose.
+    // Matches the stated requirement: don't disconnect unless it's connected
+    // and stays backgrounded too long, or it disconnects on its own anyway.
+    if (connection.phase != SessionPhase.scanning) return;
+
+    _backgroundGraceTimer = Timer(kBackgroundGracePeriod, () {
+      _backgroundGraceTimer = null;
+      context.read<LogRepository>().log(
+            'LifecycleObserver',
+            'Background grace period elapsed — disconnecting intentionally',
+          );
+      Provider.of<ConnectionController>(context, listen: false).disconnectForBackground();
+    });
   }
 
   @override

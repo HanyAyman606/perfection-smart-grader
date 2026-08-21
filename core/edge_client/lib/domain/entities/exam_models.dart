@@ -355,3 +355,13 @@ class SubmitDuplicate extends SubmitResult {
   final DuplicateComparison comparison;
   SubmitDuplicate(this.comparison);
 }
+
+/// Phase 5: returned when the phone had no connection at submit time and
+/// the scan was saved to the local offline queue instead of sent
+/// immediately. UI shows "Saved offline — will sync when connected"
+/// rather than the online-success message, so the proctor isn't misled
+/// into thinking the dashboard already has it.
+class SubmitQueued extends SubmitResult {
+  final String queueId;
+  SubmitQueued(this.queueId);
+}

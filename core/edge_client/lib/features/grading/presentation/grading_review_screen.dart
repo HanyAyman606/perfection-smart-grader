@@ -143,6 +143,23 @@ class _GradingReviewView extends StatelessWidget {
         );
         Navigator.of(context).pop();
         return;
+
+      case SubmitQueued():
+        // Phase 5.4/5.5: offline path — the scan was saved to the local
+        // queue instead of hitting the network, since we're not
+        // connected. Same "close the review screen" outcome as a normal
+        // success (the scan is done from the proctor's point of view),
+        // but the message makes clear it hasn't reached the dashboard
+        // yet — OfflineSyncWorker sends it automatically once
+        // reconnected.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Saved offline — will sync when connected'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        Navigator.of(context).pop();
+        return;
     }
   }
 

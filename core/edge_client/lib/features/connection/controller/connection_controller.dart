@@ -32,6 +32,15 @@ class ConnectionController extends ChangeNotifier {
   StreamSubscription? _statusSub;
   StreamSubscription? _eventSub;
 
+  // Set only by [disconnectForBackground] (Phase 3's grace-period timer).
+  // Lets _onConnectionStatusChanged tell "we intentionally dropped the
+  // socket to free the server slot while backgrounded, but the session is
+  // still logically alive" apart from a real disconnect/session-end, so it
+  // can leave `_phase` at `scanning` instead of resetting it — that's what
+  // lets `reconnectIfNecessary()` do a real reconnect on the next resume
+  // instead of requiring the proctor to log back in.
+  bool _backgroundSoftDisconnect = false;
+
   ConnectionController(this._connection, this._credentials, this._sessionCache) {
     _statusSub = _connection.statusStream.listen(_onConnectionStatusChanged);
     _eventSub = _connection.eventStream.listen(_onServerEvent);
@@ -46,7 +55,14 @@ class ConnectionController extends ChangeNotifier {
   void _onConnectionStatusChanged(ConnectionStatus status) {
     switch (status) {
       case ConnectionStatus.disconnected:
-        _phase = SessionPhase.disconnected;
+        if (_backgroundSoftDisconnect) {
+          // Consume the flag; deliberately leave `_phase` alone (stays
+          // `scanning`) so reconnectIfNecessary() treats this like "still
+          // mid-session, just needs its socket back" on the next resume.
+          _backgroundSoftDisconnect = false;
+        } else {
+          _phase = SessionPhase.disconnected;
+        }
         break;
       case ConnectionStatus.connecting:
       case ConnectionStatus.authenticating:
@@ -83,7 +99,15 @@ class ConnectionController extends ChangeNotifier {
       );
     } else if (event is AuthFailure) {
       _errorMessage = event.message;
-      _phase = SessionPhase.error;
+      // Only force the error phase for a genuinely fatal failure. A
+      // retryable one (see AuthFailure.isRetryable) is already being
+      // auto-retried by WebSocketClient's backoff — the status stream will
+      // move _phase to connecting on its own, so overwriting it with
+      // SessionPhase.error here would show a stuck error screen for a
+      // problem that's actively resolving itself in the background.
+      if (!event.isRetryable) {
+        _phase = SessionPhase.error;
+      }
     } else if (event is ConnectionLost) {
       _errorMessage = event.reason;
     } else if (event is SessionEnded) {
@@ -111,6 +135,17 @@ class ConnectionController extends ChangeNotifier {
   }
 
   void disconnect() => _connection.disconnect();
+
+  /// Used by LifecycleManager's Phase-3 background grace-period timer.
+  /// Intentionally tears down the socket (frees the server's slot, stops
+  /// any reconnect backoff loop) exactly like [disconnect] — but keeps
+  /// [phase] at `scanning` and keeps [masterPacket], so the next
+  /// `reconnectIfNecessary()` call (on app resume) performs a real
+  /// reconnect instead of dropping the proctor back to the login screen.
+  void disconnectForBackground() {
+    _backgroundSoftDisconnect = true;
+    _connection.disconnect();
+  }
 
   /// Disconnects and forgets saved credentials. Does NOT clear
   /// in-progress scan state/files — callers that need the old

@@ -37,8 +37,11 @@ from admin_dashboard.grading_repository import GradingRepository
 from admin_dashboard.printing.receipt_printer import build_receipt_data, print_ultimate_receipt
 SYNC_PORT = 8765
 DEFAULT_SESSION_PASSWORD = "12345678"  # fallback if no custom password saved yet
-HEARTBEAT_TIMEOUT_SECONDS = 30   # no traffic within this window -> mark disconnected
-HEARTBEAT_SWEEP_INTERVAL = 10    # how often the sweep task checks
+HEARTBEAT_TIMEOUT_SECONDS = 12   # no traffic within this window -> mark disconnected
+HEARTBEAT_SWEEP_INTERVAL = 5     # how often the sweep task checks
+STALE_SOCKET_PROBE_TIMEOUT_SECONDS = 2  # ping/pong round-trip budget when
+                                          # deciding if an "already connected"
+                                          # socket is actually still alive
 
 
 def _compute_max_score(packet_data: dict) -> float:
@@ -222,18 +225,55 @@ class WebSocketServer(QThread):
             await websocket.send(json.dumps({
                 "type": "auth_result",
                 "status": "error",
+                "reason": "bad_credentials",
                 "message": "Incorrect password." if name else "Name is required.",
             }))
             await websocket.close()
             return None
 
-        now = asyncio.get_event_loop().time()
+        # Snapshot whether there's a live-looking prior connection under this
+        # name. We deliberately don't decide anything under the lock yet —
+        # the liveness probe below needs to `await`, and _phones_lock is a
+        # plain threading.Lock (shared with the non-async parts of this
+        # class), so it must never be held across an await point.
         with self._phones_lock:
             existing = self.phones.get(name)
-            if existing is not None and existing.status == "connected":
+            existing_ws = existing.websocket if (existing is not None and existing.status == "connected") else None
+
+        if existing_ws is not None:
+            # Don't trust status=="connected" at face value — on a flaky
+            # hotspot the old socket can go silently dead (no FIN/RST) and
+            # the heartbeat sweep may not have caught it yet (up to
+            # HEARTBEAT_TIMEOUT_SECONDS). Probe it directly instead of
+            # making the reconnecting phone wait out that whole window or,
+            # worse, get rejected and have its own auto-reconnect give up.
+            if await self._probe_socket_alive(existing_ws):
                 await websocket.send(json.dumps({
                     "type": "auth_result",
                     "status": "error",
+                    "reason": "name_taken",
+                    "message": f"'{name}' is already connected from another device.",
+                }))
+                await websocket.close()
+                return None
+            else:
+                self.log_signal.emit(f"STALE SOCKET: replacing dead connection for {name}")
+                try:
+                    await existing_ws.close()
+                except Exception:
+                    pass
+
+        now = asyncio.get_event_loop().time()
+        with self._phones_lock:
+            existing = self.phones.get(name)
+            # Re-check under the lock: another coroutine may have raced us
+            # (e.g. two reconnect attempts for the same name landing close
+            # together) and already claimed this name while we were probing.
+            if existing is not None and existing.status == "connected" and existing.websocket is not existing_ws:
+                await websocket.send(json.dumps({
+                    "type": "auth_result",
+                    "status": "error",
+                    "reason": "name_taken",
                     "message": f"'{name}' is already connected from another device.",
                 }))
                 await websocket.close()
@@ -256,6 +296,18 @@ class WebSocketServer(QThread):
         self.log_signal.emit(f"CONNECTED: {name}")
         self.phone_connected.emit(name)
         return name
+
+    async def _probe_socket_alive(self, websocket, timeout: float = STALE_SOCKET_PROBE_TIMEOUT_SECONDS) -> bool:
+        """Best-effort liveness check for a websocket we believe might be
+        stale. A protocol-level ping/pong round trip is the fastest reliable
+        way to tell a genuinely-open socket from one that's silently dead,
+        without waiting for the full heartbeat sweep window."""
+        try:
+            pong_waiter = await websocket.ping()
+            await asyncio.wait_for(pong_waiter, timeout=timeout)
+            return True
+        except Exception:
+            return False
 
     def _mark_disconnected(self, name: str):
         with self._phones_lock:
@@ -483,4 +535,3 @@ class WebSocketServer(QThread):
                 }
                 for p in self.phones.values()
             ]
-

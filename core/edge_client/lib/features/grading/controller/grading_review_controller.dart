@@ -126,7 +126,7 @@ class GradingReviewController extends ChangeNotifier {
   }
 
   void _applyFieldsToScan() {
-    final idText = idController.text.trim();
+    final idText = idController.text.trim().toUpperCase();
     var groupTypeText = groupTypeController.text.trim();
 
     // Backup plan for when the letter-column OCR read wasn't clean enough
@@ -156,18 +156,45 @@ class GradingReviewController extends ChangeNotifier {
   /// this as a snackbar and stays on screen when non-null. Also checked
   /// before generating the receipt — see GradingReviewScreen — so a bad
   /// ID is caught at entry time, not only at final submit.
+  ///
+  /// Enforces the printed sheet's exact format: one capital letter drawn
+  /// from the pool the admin dashboard configured for this exam
+  /// (MasterPacket.idLetters) followed by exactly
+  /// MasterPacket.idDigitCols digits (always 3 — see the comment on that
+  /// constant), zero-padded. E.g. student 69 in group M must read
+  /// "M069", not "M69" or "M0069" — this matches exactly what's
+  /// physically printed on the bubble sheet's ID columns, so a manually
+  /// typed ID that doesn't match this shape is definitely wrong, not
+  /// just unusually formatted.
   String? get idValidationError {
-    final id = idController.text.trim();
-    if (id.isEmpty) return 'Student ID is required';
+    final rawId = idController.text.trim();
+    if (rawId.isEmpty) return 'Student ID is required';
 
-    // "000" (optionally with a single leading group letter, e.g. "C000")
-    // is what a failed/placeholder OCR read looks like — never a real
-    // student ID — so treat it the same as empty rather than letting it
-    // through to a receipt or a saved grade.
-    final digits = id.replaceFirst(RegExp(r'^[A-Za-z]'), '');
-    if (digits.isNotEmpty && RegExp(r'^0+$').hasMatch(digits)) {
-      return 'Invalid ID: "$id" is not a valid student ID.';
+    final id = rawId.toUpperCase();
+    final digitCols = MasterPacket.idDigitCols;
+    final letters = _connectionController.masterPacket?.idLetters ?? const <String>[];
+
+    final formatRegex = RegExp('^[A-Z]\\d{$digitCols}\$');
+    if (!formatRegex.hasMatch(id)) {
+      final example = '${letters.isNotEmpty ? letters.first : 'M'}${'0' * (digitCols - 1)}1';
+      return 'Invalid ID format: "$rawId". Must be one letter followed by '
+          '$digitCols digits, e.g. "$example".';
     }
+
+    final letter = id[0];
+    if (letters.isNotEmpty && !letters.contains(letter)) {
+      return 'Invalid ID: "$letter" is not a group letter for this exam '
+          '(${letters.join(", ")}).';
+    }
+
+    // "000" (e.g. "C000") is what a failed/placeholder OCR read looks
+    // like — never a real student ID — so treat it the same as empty
+    // rather than letting it through to a receipt or a saved grade.
+    final digits = id.substring(1);
+    if (RegExp(r'^0+$').hasMatch(digits)) {
+      return 'Invalid ID: "$rawId" is not a valid student ID.';
+    }
+
     return null;
   }
 

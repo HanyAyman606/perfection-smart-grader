@@ -7,6 +7,9 @@ import '../controller/scan_controller.dart';
 import 'camera_capture_screen.dart';
 import 'panel_preview_screen.dart';
 import '../../connection/presentation/connection_screen.dart';
+import '../../queue/presentation/offline_queue_screen.dart';
+import '../../../domain/repositories/offline_queue_repository.dart';
+import '../../../domain/entities/queue_models.dart';
 
 /// Entry point for capturing a student's answer sheet, using an in-app
 /// camera preview (CameraCaptureScreen) rather than redirecting out to
@@ -100,6 +103,29 @@ class _ScannerViewState extends State<ScannerView> {
               },
             ),
           const SizedBox(width: 12),
+          // Phase 5.8: badge showing how many scans are waiting to sync,
+          // tapping opens the retention/erase screen. Live count via
+          // watchPending() so it updates as OfflineSyncWorker drains the
+          // queue in the background, no manual refresh needed.
+          StreamBuilder<List<QueuedScan>>(
+            stream: context.read<OfflineQueueRepository>().watchPending(),
+            builder: (context, snapshot) {
+              final count = snapshot.data?.length ?? 0;
+              return IconButton(
+                tooltip: count > 0 ? '$count scan${count == 1 ? '' : 's'} queued offline' : 'Offline queue',
+                icon: Badge(
+                  isLabelVisible: count > 0,
+                  label: Text('$count'),
+                  child: const Icon(Icons.cloud_upload_outlined),
+                ),
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const OfflineQueueScreen()),
+                  );
+                },
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Log Out',

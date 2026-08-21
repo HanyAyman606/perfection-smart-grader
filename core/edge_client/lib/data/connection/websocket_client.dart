@@ -16,7 +16,13 @@ class AuthSuccess extends ServerEvent {
 
 class AuthFailure extends ServerEvent {
   final String message;
-  AuthFailure(this.message);
+  // True when the server rejected auth for a reason that WebSocketClient
+  // will automatically retry (currently: "name_taken" — see the
+  // isRetryable branch in _onMessage). Lets listeners like
+  // ConnectionController avoid showing a stuck error phase for a failure
+  // that's already being retried in the background.
+  final bool isRetryable;
+  AuthFailure(this.message, {this.isRetryable = false});
 }
 
 class ScoreSaved extends ServerEvent {
@@ -43,11 +49,18 @@ class ConnectionLost extends ServerEvent {
 class SessionEnded extends ServerEvent {}
 
 class WebSocketClient implements ConnectionRepository {
-  WebSocketClient(this._log) {
+  WebSocketClient(this._log, {WebSocketChannel Function(Uri uri)? channelFactory})
+      : _channelFactory = channelFactory ?? WebSocketChannel.connect {
     _updateStatus(ConnectionStatus.disconnected);
   }
 
   final LogRepository _log;
+
+  // Seam for tests: production code always uses the default
+  // (WebSocketChannel.connect), tests inject a fake channel factory so
+  // _doConnect can be exercised without opening a real socket. See
+  // test/websocket_client_test.dart.
+  final WebSocketChannel Function(Uri uri) _channelFactory;
 
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -107,7 +120,7 @@ class WebSocketClient implements ConnectionRepository {
     _lastPort = port;
     _lastName = name;
     _lastPassword = password;
-    
+
     _reconnectAttempt = 0;
     await _doConnect();
   }
@@ -126,7 +139,7 @@ class WebSocketClient implements ConnectionRepository {
     _updateStatus(ConnectionStatus.connecting);
     try {
       final wsUrl = Uri.parse('ws://$_lastHost:$_lastPort');
-      _channel = WebSocketChannel.connect(wsUrl);
+      _channel = _channelFactory(wsUrl);
 
       // A wrong/unreachable IP on a LAN typically gets no response at all
       // (dropped SYN) — without an explicit timeout this can hang for the
@@ -183,11 +196,32 @@ class WebSocketClient implements ConnectionRepository {
           final packet = MasterPacket.fromJson(data['master_packet'] as Map<String, dynamic>);
           _eventController.add(AuthSuccess(packet));
         } else {
-          // Explicit auth failure (wrong password), DO NOT auto-retry
-          _updateStatus(ConnectionStatus.error);
-          _intentionalDisconnect = true; 
-          _cleanupConnections();
-          _eventController.add(AuthFailure(data['message'] ?? 'Authentication failed'));
+          // The server rejects auth for exactly two reasons (see
+          // websocket_server.py::_authenticate): bad credentials, or
+          // "name_taken" — it still believes an old connection under this
+          // name is alive. Only the credentials case is truly fatal; a
+          // name_taken rejection is often just a timing race (the old
+          // socket is actually dead but hasn't been reaped yet) that
+          // resolves itself on the next attempt, so it should retry with
+          // the normal backoff instead of stranding the proctor on a
+          // manual-login screen. Treat a missing/unrecognized `reason`
+          // (e.g. an older server build) as fatal too — that's the safer
+          // default over silently retrying forever against an unknown
+          // problem.
+          final reason = data['reason'] as String?;
+          final isRetryable = reason == 'name_taken';
+          _eventController.add(AuthFailure(
+            data['message'] ?? 'Authentication failed',
+            isRetryable: isRetryable,
+          ));
+          if (isRetryable) {
+            _cleanupConnections();
+            _scheduleReconnect();
+          } else {
+            _updateStatus(ConnectionStatus.error);
+            _intentionalDisconnect = true;
+            _cleanupConnections();
+          }
         }
       } else if (type == 'score_result') {
         final requestId = data['request_id'] as String?;
@@ -223,28 +257,28 @@ class WebSocketClient implements ConnectionRepository {
 
   void _onDisconnected() {
     _cleanupConnections();
-    
+
     if (_intentionalDisconnect) {
       _updateStatus(ConnectionStatus.disconnected);
       return;
     }
-    
+
     if (_currentStatus != ConnectionStatus.connecting && _currentStatus != ConnectionStatus.authenticating) {
       _eventController.add(ConnectionLost("Connection unexpectedly closed"));
     }
-    
+
     _scheduleReconnect();
   }
 
   void _scheduleReconnect() {
     _updateStatus(ConnectionStatus.connecting);
-    
+
     // Backoff: 3, 6, 12, 24, 30... (min(3 * 2^attempt, 30))
     int delaySecs = 3 * (1 << _reconnectAttempt);
     if (delaySecs > 30) delaySecs = 30;
-    
+
     _reconnectAttempt++;
-    
+
     _reconnectTimer = Timer(Duration(seconds: delaySecs), () {
       if (!_intentionalDisconnect) {
         _doConnect();
@@ -269,7 +303,7 @@ class WebSocketClient implements ConnectionRepository {
     _reconnectTimer?.cancel();
     _subscription?.cancel();
     _channel?.sink.close();
-    
+
     _pingTimer = null;
     _reconnectTimer = null;
     _subscription = null;

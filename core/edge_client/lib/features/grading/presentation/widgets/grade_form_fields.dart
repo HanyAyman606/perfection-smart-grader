@@ -47,6 +47,7 @@ class GradeFormFields extends StatelessWidget {
         TextField(
           controller: idController,
           enabled: enabled,
+          textCapitalization: TextCapitalization.characters,
           decoration: const InputDecoration(labelText: 'Student ID', border: OutlineInputBorder()),
         ),
         if (showIdReviewWarning) ...[

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nexus_edge/domain/entities/exam_models.dart';
+import 'package:smart_grader/domain/entities/exam_models.dart';
 
 void main() {
   group('McqRange', () {
@@ -8,7 +8,7 @@ void main() {
       expect(range.start, 5);
       expect(range.end, 10);
       expect(range.points, 2.5);
-      
+
       expect(range.covers(5), isTrue);
       expect(range.covers(10), isTrue);
       expect(range.covers(7), isTrue);
@@ -60,7 +60,7 @@ void main() {
         'id_letter_count': 0,
         'id_digit_columns': 4
       };
-      
+
       final packet = MasterPacket.fromJson(json);
       expect(packet.examName, 'Midterm');
       expect(packet.examMode, 'quiz');
@@ -68,7 +68,7 @@ void main() {
       expect(packet.supportsMultipleVersions, isFalse);
       expect(packet.hasEssays, false);
       expect(packet.essayMaxTotal, 0.0);
-      
+
       final outJson = packet.toJson();
       expect(outJson['exam_name'], 'Midterm');
       expect(outJson['choices_per_question'], 5);
@@ -156,15 +156,15 @@ void main() {
         mistakes: [Mistake(question: 1, correct: 'A', given: 'B')],
         essayTotal: 5.0
       );
-      
+
       expect(result.totalScore, 25.0);
-      
+
       // Mutate
       result.studentId = 'S002';
       result.essayTotal = 10.0;
       expect(result.studentId, 'S002');
       expect(result.totalScore, 30.0);
-      
+
       final payload = result.toSubmitScorePayload('2026-08-01T12:00:00Z');
       expect(payload, {
         'type': 'submit_score',
