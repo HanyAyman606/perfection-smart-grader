@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont
 from admin_dashboard.theme import INPUT_STYLE, CLOUDY_SKY, NEON_PINK, TEXT_MUTED, BG_PANEL
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.exam_modes import EXAM_MODES, DEFAULT_MODE_ID
+from admin_dashboard.widgets.styled import make_outline_button
 from admin_dashboard.widgets.mcq_range_builder import MCQRangeBuilder
 from admin_dashboard.screens.dialogs import show_warning, show_info
 
@@ -172,16 +173,10 @@ class SetupPage(QWidget):
         self._refresh_grand_total()
 
         # -- Save ---------------------------------------------------------
-        btn_save_blueprint = QPushButton("💾 SAVE EXAM BLUEPRINT")
-        btn_save_blueprint.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
-        btn_save_blueprint.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_save_blueprint.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {CLOUDY_SKY};
-                border: 2px solid {CLOUDY_SKY}; border-radius: 8px; padding: 15px; margin-top: 10px;
-            }}
-            QPushButton:hover {{ background-color: {CLOUDY_SKY}; color: #ffffff; }}
-        """)
+        btn_save_blueprint = make_outline_button(
+            "💾 SAVE EXAM BLUEPRINT", orbitron, CLOUDY_SKY,
+            font_size=12, padding="15px", extra_style="margin-top: 10px;",
+        )
         btn_save_blueprint.clicked.connect(self.save_blueprint)
         content_layout.addWidget(btn_save_blueprint)
 

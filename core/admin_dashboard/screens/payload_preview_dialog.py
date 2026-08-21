@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, NEON_PINK, BG_PANEL, BG_CARD, TRUE_AZURE, CLOUDY_SKY
 from admin_dashboard.exam_modes import get_mode_by_id
+from admin_dashboard.widgets.styled import make_title_label, make_outline_button, make_link_button
 
 
 class PayloadPreviewDialog(QDialog):
@@ -37,10 +38,7 @@ class PayloadPreviewDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(26, 24, 26, 24)
 
-        title = QLabel("📡 PAYLOAD ABOUT TO BE SENT")
-        title.setFont(QFont(orbitron, 14, QFont.Weight.Black))
-        title.setStyleSheet(f"color: {CLOUDY_SKY}; letter-spacing: 1px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title = make_title_label("📡 PAYLOAD ABOUT TO BE SENT", orbitron, CLOUDY_SKY, font_size=14)
         layout.addWidget(title)
 
         scroll = QScrollArea()
@@ -90,38 +88,15 @@ class PayloadPreviewDialog(QDialog):
         for label, value in rows:
             content_layout.addWidget(self._build_row(label, value, mono, orbitron))
 
-        btn_view_json = QPushButton("🔍 VIEW RAW JSON")
-        btn_view_json.setFont(QFont(orbitron, 11, QFont.Weight.Bold))
-        btn_view_json.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_view_json.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {SKY_AQUA};
-                border: 2px solid {SKY_AQUA}; border-radius: 8px; padding: 10px;
-            }}
-            QPushButton:hover {{ background-color: {SKY_AQUA}; color: #ffffff; }}
-        """)
+        btn_view_json = make_outline_button("🔍 VIEW RAW JSON", orbitron, SKY_AQUA, font_size=11, padding="10px")
         btn_view_json.clicked.connect(self._show_raw_json)
         layout.addWidget(btn_view_json)
 
-        btn_confirm = QPushButton("🚀 CONFIRM & START SERVER")
-        btn_confirm.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
-        btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_confirm.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {NEON_PINK};
-                border: 2px solid {NEON_PINK}; border-radius: 8px; padding: 14px;
-            }}
-            QPushButton:hover {{ background-color: {NEON_PINK}; color: #ffffff; }}
-        """)
+        btn_confirm = make_outline_button("🚀 CONFIRM & START SERVER", orbitron, NEON_PINK, font_size=12, padding="14px")
         btn_confirm.clicked.connect(self.accept)
         layout.addWidget(btn_confirm)
 
-        btn_cancel = QPushButton("CANCEL")
-        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_cancel.setStyleSheet(f"""
-            QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; border: none; padding: 8px; }}
-            QPushButton:hover {{ color: #000000; }}
-        """)
+        btn_cancel = make_link_button("CANCEL", hover_color="#000000")
         btn_cancel.clicked.connect(self.reject)
         layout.addWidget(btn_cancel)
 
@@ -161,9 +136,7 @@ class PayloadPreviewDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        title = QLabel("📄 EXACT PAYLOAD JSON")
-        title.setFont(QFont(self.orbitron, 13, QFont.Weight.Black))
-        title.setStyleSheet(f"color: {CLOUDY_SKY}; letter-spacing: 1px;")
+        title = make_title_label("📄 EXACT PAYLOAD JSON", self.orbitron, CLOUDY_SKY, font_size=13, center=False)
         layout.addWidget(title)
 
         text_box = QTextEdit()
@@ -179,24 +152,10 @@ class PayloadPreviewDialog(QDialog):
         layout.addWidget(text_box)
 
         btn_row = QHBoxLayout()
-        btn_copy = QPushButton("📋 COPY TO CLIPBOARD")
-        btn_copy.setFont(QFont(self.orbitron, 10, QFont.Weight.Bold))
-        btn_copy.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_copy.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {SKY_AQUA};
-                border: 2px solid {SKY_AQUA}; border-radius: 8px; padding: 10px;
-            }}
-            QPushButton:hover {{ background-color: {SKY_AQUA}; color: #ffffff; }}
-        """)
+        btn_copy = make_outline_button("📋 COPY TO CLIPBOARD", self.orbitron, SKY_AQUA, font_size=10, padding="10px")
         btn_copy.clicked.connect(lambda: self._copy_text(text_box))
 
-        btn_close = QPushButton("CLOSE")
-        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_close.setStyleSheet(f"""
-            QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; border: none; padding: 10px; }}
-            QPushButton:hover {{ color: #ffffff; }}
-        """)
+        btn_close = make_link_button("CLOSE", hover_color="#ffffff", padding="10px")
         btn_close.clicked.connect(dialog.accept)
 
         btn_row.addWidget(btn_copy)

@@ -47,20 +47,94 @@ def make_outline_button(
     hover_text_color: str = "#ffffff",
     padding: str = "12px",
     radius: int = 8,
+    background: str = BG_PANEL,
+    extra_style: str = "",
 ) -> QPushButton:
     """The 'outline that fills solid on hover' button used for every
-    secondary/cancel/browse action across dialogs and pages."""
+    secondary/cancel/browse action across dialogs and pages.
+
+    extra_style: raw CSS declarations (e.g. "margin-top: 10px;") appended
+    inside the QPushButton{} block for the rare one-off tweak that isn't
+    worth a new named parameter."""
     btn = QPushButton(text)
     btn.setFont(QFont(font_family, font_size, QFont.Weight.Bold))
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setStyleSheet(f"""
         QPushButton {{
-            background-color: {BG_PANEL}; color: {accent};
+            background-color: {background}; color: {accent};
             border: 2px solid {accent}; border-radius: {radius}px; padding: {padding};
+            {extra_style}
         }}
         QPushButton:hover {{ background-color: {accent}; color: {hover_text_color}; }}
-        QPushButton:disabled {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; border-color: {TEXT_MUTED}; }}
+        QPushButton:disabled {{ background-color: {background}; color: {TEXT_MUTED}; border-color: {TEXT_MUTED}; }}
     """)
+    return btn
+
+
+def make_dashed_button(
+    text: str,
+    font_family: str,
+    accent: str,
+    *,
+    font_size: int = 10,
+    padding: str = "12px",
+    radius: int = 8,
+    background: str = "transparent",
+) -> QPushButton:
+    """The 'dashed outline that solidifies on hover' button used for
+    every '+ ADD ...' affordance (add group, add mark range, browse for
+    another folder). Same interaction idea as make_outline_button but
+    dashed at rest, signaling 'this creates something new' rather than
+    'this acts on something that already exists'."""
+    btn = QPushButton(text)
+    btn.setFont(QFont(font_family, font_size, QFont.Weight.Bold))
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {background}; color: {accent};
+            border: 2px dashed {accent}; border-radius: {radius}px; padding: {padding};
+        }}
+        QPushButton:hover {{ background-color: {accent}; color: #ffffff; border-style: solid; }}
+    """)
+    return btn
+
+
+def make_icon_button(
+    glyph: str,
+    accent_hover: str,
+    *,
+    size: int = 34,
+    font_size: int = 16,
+) -> QPushButton:
+    """Small borderless glyph-only button (✎ rename, ✕ delete) used on
+    list/card rows. Neutral at rest, colors on hover to hint at the
+    action (e.g. red for delete)."""
+    btn = QPushButton(glyph)
+    btn.setFixedSize(size, size)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet(
+        f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
+        f"border: none; font-weight: bold; font-size: {font_size}px; padding: 0px; text-align: center; }} "
+        f"QPushButton:hover {{ color: {accent_hover}; }}"
+    )
+    return btn
+
+
+def make_link_button(
+    text: str,
+    *,
+    hover_color: str = "#ffffff",
+    padding: str = "8px",
+) -> QPushButton:
+    """Borderless, transparent 'CANCEL'/'CLOSE' link-style button used at
+    the bottom of dialogs as the low-emphasis dismiss action, next to a
+    make_outline_button primary action."""
+    btn = QPushButton(text)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setStyleSheet(
+        f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; border: none; padding: {padding}; }} "
+        f"QPushButton:hover {{ color: {hover_color}; }}"
+    )
     return btn
 
 

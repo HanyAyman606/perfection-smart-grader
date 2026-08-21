@@ -20,6 +20,7 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import INPUT_STYLE, TEXT_MUTED, WARN_COLOR, SKY_AQUA, BG_PANEL
+from admin_dashboard.widgets.styled import make_dashed_button
 
 
 class MCQRangeRow(QWidget):
@@ -128,14 +129,7 @@ class MCQRangeBuilder(QWidget):
         self.rows_layout.setSpacing(8)
         self.layout_.addLayout(self.rows_layout)
 
-        self.btn_add_range = QPushButton("+ ADD MARK RANGE")
-        self.btn_add_range.setFont(QFont(orbitron, 10, QFont.Weight.Bold))
-        self.btn_add_range.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_add_range.setStyleSheet(f"""
-            QPushButton {{ background-color: transparent; color: {SKY_AQUA};
-                border: 2px dashed {SKY_AQUA}; border-radius: 8px; padding: 10px; }}
-            QPushButton:hover {{ color: #ffffff; background-color: {SKY_AQUA}; border-style: solid; }}
-        """)
+        self.btn_add_range = make_dashed_button("+ ADD MARK RANGE", orbitron, SKY_AQUA, padding="10px")
         self.btn_add_range.clicked.connect(self.add_range)
         self.layout_.addWidget(self.btn_add_range)
 

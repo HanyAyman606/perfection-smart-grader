@@ -24,6 +24,7 @@ from admin_dashboard.theme import (
 from admin_dashboard.project_manager import ProjectManager
 from admin_dashboard.workspace_controller import WorkspaceController
 from admin_dashboard.widgets.common import PulsingDot, NavButton, GridBackground, ScanlineOverlay
+from admin_dashboard.widgets.styled import make_outline_button
 from admin_dashboard.widgets.ip_share_card import IpShareCard
 from admin_dashboard.screens.login_screen import LoginScreen
 from admin_dashboard.screens.welcome_screen import WelcomeScreen
@@ -188,16 +189,10 @@ class OptiMarkDashboard(QMainWindow):
             sidebar_layout.addWidget(btn)
         sidebar_layout.addStretch()
 
-        btn_switch_workspace = QPushButton("⤺ SWITCH WORKSPACE")
-        btn_switch_workspace.setFont(_font(self.fonts.orbitron, 10, "Bold"))
-        btn_switch_workspace.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_switch_workspace.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: transparent; color: {TEXT_MUTED};
-                        border: 2px solid {TEXT_MUTED}; border-radius: 10px; padding: 12px;
-                    }}
-                    QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; }}
-                """)
+        btn_switch_workspace = make_outline_button(
+            "⤺ SWITCH WORKSPACE", self.fonts.orbitron, TEXT_MUTED,
+            padding="12px", radius=10, background="transparent",
+        )
         btn_switch_workspace.clicked.connect(self.return_to_hub)
         sidebar_layout.addWidget(btn_switch_workspace)
 

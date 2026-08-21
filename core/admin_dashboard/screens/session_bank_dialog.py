@@ -19,6 +19,7 @@ from admin_dashboard.theme import (
 )
 from admin_dashboard.recent_projects import recent_projects
 from admin_dashboard.widgets.common import apply_card_shadow
+from admin_dashboard.widgets.styled import make_title_label, make_dashed_button
 from admin_dashboard.screens.dialogs import open_directory_dialog
 
 
@@ -39,10 +40,7 @@ class SessionBankDialog(QDialog):
         layout.setSpacing(14)
         layout.setContentsMargins(26, 24, 26, 24)
 
-        title = QLabel("SESSION BANK")
-        title.setFont(QFont(orbitron, 14, QFont.Weight.Black))
-        title.setStyleSheet(f"color: {CLOUDY_SKY}; letter-spacing: 2px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title = make_title_label("SESSION BANK", orbitron, CLOUDY_SKY, font_size=14, letter_spacing="2px")
         layout.addWidget(title)
 
         subtitle = QLabel("Recently used exam workspaces")
@@ -64,16 +62,7 @@ class SessionBankDialog(QDialog):
 
         self._populate_list()
 
-        btn_browse = QPushButton("📂 BROWSE FOR OTHER FOLDER")
-        btn_browse.setFont(QFont(orbitron, 10, QFont.Weight.Bold))
-        btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_browse.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent; color: {TEXT_MUTED};
-                border: 2px dashed {TEXT_MUTED}; border-radius: 8px; padding: 12px;
-            }}
-            QPushButton:hover {{ background-color: {TEXT_MUTED}; color: #ffffff; border-style: solid; }}
-        """)
+        btn_browse = make_dashed_button("📂 BROWSE FOR OTHER FOLDER", orbitron, TEXT_MUTED, padding="12px")
         btn_browse.clicked.connect(self._browse_for_folder)
         layout.addWidget(btn_browse)
 

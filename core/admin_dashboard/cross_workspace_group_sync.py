@@ -15,9 +15,27 @@ living as static methods bolted onto the active-workspace manager.
 
 import os
 import sqlite3
+from contextlib import contextmanager
 
 from admin_dashboard.recent_projects import recent_projects
 from admin_dashboard.project_manager import DB_FILENAME
+
+
+@contextmanager
+def _connection(db_path: str):
+    """Guarantees conn.close() runs even if a query raises mid-loop over
+    the previous conn = connect(); ...; conn.commit(); conn.close()
+    pattern, a raised exception on one workspace's connection (mid-loop,
+    across purge_group_everywhere/rename_group_everywhere's iteration
+    over every known workspace) skipped conn.close() for that connection
+    entirely. Auto-commits on clean exit; a raised exception skips the
+    commit and still closes the connection."""
+    conn = sqlite3.connect(db_path)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class CrossWorkspaceGroupSync:
@@ -31,25 +49,23 @@ class CrossWorkspaceGroupSync:
             db_path = os.path.join(entry["path"], DB_FILENAME)
             if not os.path.exists(db_path):
                 continue
-            conn = sqlite3.connect(db_path)
-            existing_tables = {
-                row[0] for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' "
-                    "AND name IN ('students', 'grades', 'sessions')"
-                )
-            }
-            if "students" in existing_tables:
-                conn.execute("DELETE FROM students WHERE group_name = ?", (group_name,))
-            if "sessions" in existing_tables and "grades" in existing_tables:
-                conn.execute(
-                    "DELETE FROM grades WHERE session_id IN "
-                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
-                    (group_name,),
-                )
-            if "sessions" in existing_tables:
-                conn.execute("DELETE FROM sessions WHERE group_name = ?", (group_name,))
-            conn.commit()
-            conn.close()
+            with _connection(db_path) as conn:
+                existing_tables = {
+                    row[0] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name IN ('students', 'grades', 'sessions')"
+                    )
+                }
+                if "students" in existing_tables:
+                    conn.execute("DELETE FROM students WHERE group_name = ?", (group_name,))
+                if "sessions" in existing_tables and "grades" in existing_tables:
+                    conn.execute(
+                        "DELETE FROM grades WHERE session_id IN "
+                        "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                        (group_name,),
+                    )
+                if "sessions" in existing_tables:
+                    conn.execute("DELETE FROM sessions WHERE group_name = ?", (group_name,))
 
     @staticmethod
     def rename_group_everywhere(old_name: str, new_name: str):
@@ -61,22 +77,20 @@ class CrossWorkspaceGroupSync:
             db_path = os.path.join(entry["path"], DB_FILENAME)
             if not os.path.exists(db_path):
                 continue
-            conn = sqlite3.connect(db_path)
-            existing_tables = {
-                row[0] for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' "
-                    "AND name IN ('students', 'sessions')"
-                )
-            }
-            if "students" in existing_tables:
-                conn.execute(
-                    "UPDATE students SET group_name = ? WHERE group_name = ?",
-                    (new_name, old_name),
-                )
-            if "sessions" in existing_tables:
-                conn.execute(
-                    "UPDATE sessions SET group_name = ? WHERE group_name = ?",
-                    (new_name, old_name),
-                )
-            conn.commit()
-            conn.close()
+            with _connection(db_path) as conn:
+                existing_tables = {
+                    row[0] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name IN ('students', 'sessions')"
+                    )
+                }
+                if "students" in existing_tables:
+                    conn.execute(
+                        "UPDATE students SET group_name = ? WHERE group_name = ?",
+                        (new_name, old_name),
+                    )
+                if "sessions" in existing_tables:
+                    conn.execute(
+                        "UPDATE sessions SET group_name = ? WHERE group_name = ?",
+                        (new_name, old_name),
+                    )

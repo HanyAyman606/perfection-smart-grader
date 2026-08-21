@@ -22,6 +22,7 @@ from PySide6.QtGui import QFont
 from admin_dashboard.theme import CLOUDY_SKY, NEON_PINK, BG_PANEL, WARN_COLOR, TEXT_MUTED
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.bubble_row import BubbleRow
+from admin_dashboard.widgets.styled import make_outline_button
 from admin_dashboard.exam_modes import DEFAULT_MODE_ID, SINGLE_VERSION_KEY, get_mode_by_id
 from admin_dashboard.screens.dialogs import show_warning, show_info
 from admin_dashboard.screens.dialogs import show_warning, show_info, ask_yes_no
@@ -90,18 +91,11 @@ class ModelAnswerPage(QWidget):
         self.scroll.setWidget(self.rows_container)
         content_layout.addWidget(self.scroll)
 
-        self.btn_save = QPushButton("💾 SAVE MODEL ANSWER KEY")
-        self.btn_save.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
-        self.btn_save.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_save = make_outline_button(
+            "💾 SAVE MODEL ANSWER KEY", orbitron, CLOUDY_SKY,
+            font_size=12, padding="15px", extra_style="margin-top: 10px;",
+        )
         self.btn_save.setEnabled(False)
-        self.btn_save.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {CLOUDY_SKY};
-                border: 2px solid {CLOUDY_SKY}; border-radius: 8px; padding: 15px; margin-top: 10px;
-            }}
-            QPushButton:hover {{ background-color: {CLOUDY_SKY}; color: #ffffff; }}
-            QPushButton:disabled {{ background-color: {BG_PANEL}; color: {TEXT_MUTED}; border-color: {TEXT_MUTED}; }}
-        """)
         self.btn_save.clicked.connect(self.save_model_answers)
         content_layout.addWidget(self.btn_save)
 

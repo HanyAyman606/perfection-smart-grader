@@ -27,6 +27,7 @@ from admin_dashboard.theme import (
 )
 from admin_dashboard.pages.base import build_page_shell
 from admin_dashboard.widgets.common import apply_card_shadow, ThemedButton
+from admin_dashboard.widgets.styled import make_dashed_button, make_icon_button
 from admin_dashboard.group_registry import group_registry
 from admin_dashboard.screens.new_group_dialog import NewGroupDialog
 from admin_dashboard.cross_workspace_group_sync import CrossWorkspaceGroupSync
@@ -49,16 +50,10 @@ class GroupHubMixin:
         self.btn_return_to_live.setVisible(False)
         content_layout.addWidget(self.btn_return_to_live)
 
-        btn_add_group = QPushButton("+ ADD NEW GROUP")
-        btn_add_group.setFont(QFont(self.fonts.orbitron, 12, QFont.Weight.Bold))
-        btn_add_group.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_add_group.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {NEON_PINK};
-                border: 2px dashed {NEON_PINK}; border-radius: 12px; padding: 20px;
-            }}
-            QPushButton:hover {{ background-color: {NEON_PINK}; color: #ffffff; border-style: solid; }}
-        """)
+        btn_add_group = make_dashed_button(
+            "+ ADD NEW GROUP", self.fonts.orbitron, NEON_PINK,
+            font_size=12, padding="20px", radius=12, background=BG_PANEL,
+        )
         btn_add_group.clicked.connect(self.create_new_group)
         content_layout.addWidget(btn_add_group)
 
@@ -120,24 +115,10 @@ class GroupHubMixin:
         title.setFont(QFont(self.fonts.orbitron, 14, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {SKY_AQUA}; background: transparent; border: none;")
 
-        btn_rename = QPushButton("✎")
-        btn_rename.setFixedSize(34, 34)
-        btn_rename.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_rename.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
-            f"border: none; font-weight: bold; font-size: 16px; padding: 0px; text-align: center; }} "
-            f"QPushButton:hover {{ color: {CLOUDY_SKY}; }}"
-        )
+        btn_rename = make_icon_button("✎", CLOUDY_SKY)
         btn_rename.clicked.connect(lambda checked, g=group_name: self.rename_group(g))
 
-        btn_delete = QPushButton("✕")
-        btn_delete.setFixedSize(34, 34)
-        btn_delete.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_delete.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
-            f"border: none; font-weight: bold; font-size: 16px; padding: 0px; text-align: center; }} "
-            f"QPushButton:hover {{ color: {WARN_COLOR}; }}"
-        )
+        btn_delete = make_icon_button("✕", WARN_COLOR)
         btn_delete.clicked.connect(lambda checked, g=group_name: self.delete_group(g))
 
         title_row.addWidget(title)

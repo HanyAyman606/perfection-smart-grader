@@ -15,6 +15,7 @@ db_path changes when the admin switches projects.
 
 import os
 import sqlite3
+from contextlib import contextmanager
 
 STUDENTS_TABLE_SQL = """
     CREATE TABLE IF NOT EXISTS students (
@@ -24,23 +25,34 @@ STUDENTS_TABLE_SQL = """
 """
 
 
-class RosterRepository:
-    @staticmethod
-    def _connect(db_path: str):
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute(STUDENTS_TABLE_SQL)
-        return conn, cursor
+@contextmanager
+def _connection(db_path: str):
+    """Guarantees conn.close() runs even if a query raises mid-method —
+    the previous _connect() returned a bare (conn, cursor) pair with each
+    call site responsible for its own conn.close(), which meant an early
+    `return` or a raised exception between _connect() and close() leaked
+    the connection (see e.g. purge_orphaned_groups' early-return path
+    before this fix). Auto-commits on clean exit; a raised exception
+    skips the commit and still closes the connection."""
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(STUDENTS_TABLE_SQL)
+    try:
+        yield conn, cursor
+        conn.commit()
+    finally:
+        conn.close()
 
+
+class RosterRepository:
     @staticmethod
     def get_groups(db_path: str) -> list[tuple[str, int]]:
         """Returns [(group_name, student_count), ...] for the group hub cards."""
         if not os.path.exists(db_path):
             return []
-        conn, cursor = RosterRepository._connect(db_path)
-        cursor.execute("SELECT group_name, COUNT(*) FROM students GROUP BY group_name")
-        rows = cursor.fetchall()
-        conn.close()
+        with _connection(db_path) as (conn, cursor):
+            cursor.execute("SELECT group_name, COUNT(*) FROM students GROUP BY group_name")
+            rows = cursor.fetchall()
         return [(name, count) for name, count in rows if name]
 
     @staticmethod
@@ -61,33 +73,29 @@ class RosterRepository:
         if not os.path.exists(db_path):
             return
 
-        conn, cursor = RosterRepository._connect(db_path)
-        cursor.execute("SELECT DISTINCT group_name FROM students WHERE group_name IS NOT NULL")
-        stored_names = {row[0] for row in cursor.fetchall()}
+        with _connection(db_path) as (conn, cursor):
+            cursor.execute("SELECT DISTINCT group_name FROM students WHERE group_name IS NOT NULL")
+            stored_names = {row[0] for row in cursor.fetchall()}
 
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('grades', 'sessions')"
-        )
-        existing_tables = {row[0] for row in cursor.fetchall()}
-        if "sessions" in existing_tables:
-            cursor.execute("SELECT DISTINCT group_name FROM sessions WHERE group_name IS NOT NULL")
-            stored_names |= {row[0] for row in cursor.fetchall()}
-
-        orphans = stored_names - known_group_names
-        if not orphans:
-            conn.close()
-            return
-
-        for name in orphans:
-            cursor.execute("DELETE FROM students WHERE group_name = ?", (name,))
-            if "sessions" in existing_tables and "grades" in existing_tables:
-                cursor.execute(
-                    "DELETE FROM grades WHERE session_id IN "
-                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
-                    (name,),
-                )
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('grades', 'sessions')"
+            )
+            existing_tables = {row[0] for row in cursor.fetchall()}
             if "sessions" in existing_tables:
-                cursor.execute("DELETE FROM sessions WHERE group_name = ?", (name,))
+                cursor.execute("SELECT DISTINCT group_name FROM sessions WHERE group_name IS NOT NULL")
+                stored_names |= {row[0] for row in cursor.fetchall()}
 
-        conn.commit()
-        conn.close()
+            orphans = stored_names - known_group_names
+            if not orphans:
+                return
+
+            for name in orphans:
+                cursor.execute("DELETE FROM students WHERE group_name = ?", (name,))
+                if "sessions" in existing_tables and "grades" in existing_tables:
+                    cursor.execute(
+                        "DELETE FROM grades WHERE session_id IN "
+                        "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                        (name,),
+                    )
+                if "sessions" in existing_tables:
+                    cursor.execute("DELETE FROM sessions WHERE group_name = ?", (name,))

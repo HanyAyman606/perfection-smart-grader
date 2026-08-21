@@ -1,9 +1,10 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLineEdit
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 
 from admin_dashboard.theme import SKY_AQUA, TEXT_MUTED, NEON_PINK, BG_PANEL, TRUE_AZURE, WARN_COLOR
 from admin_dashboard.auth_manager import auth_manager
+from admin_dashboard.widgets.styled import make_outline_button
 
 
 class LoginScreen(QWidget):
@@ -39,17 +40,8 @@ class LoginScreen(QWidget):
         """)
         self.password_input.returnPressed.connect(self.attempt_login)
 
-        btn_login = QPushButton("AUTHENTICATE")
-        btn_login.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
-        btn_login.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_login = make_outline_button("AUTHENTICATE", orbitron, SKY_AQUA, font_size=12, hover_text_color="#000000", padding="15px")
         btn_login.setFixedWidth(400)
-        btn_login.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {BG_PANEL}; color: {SKY_AQUA};
-                border: 2px solid {SKY_AQUA}; border-radius: 8px; padding: 15px;
-            }}
-            QPushButton:hover {{ background-color: {SKY_AQUA}; color: #000000; }}
-        """)
         btn_login.clicked.connect(self.attempt_login)
 
         self.error_lbl = QLabel("")
