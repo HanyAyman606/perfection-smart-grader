@@ -130,4 +130,8 @@ def print_ultimate_receipt(printer_name, student_data, proctor_name):
         # committed to roster.db by the time this runs (see
         # websocket_server.py). A print failure (printer off, out of
         # paper, wrong name) is logged, never raised.
-        print(f"Receipt print failed: {e}")
+        import logging, os
+        log_path = os.path.join(os.environ.get("LOCALAPPDATA", "."), "SmartGrader", "print_errors.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        logging.basicConfig(filename=log_path, level=logging.ERROR)
+        logging.error(f"Receipt print failed: {e}", exc_info=True)

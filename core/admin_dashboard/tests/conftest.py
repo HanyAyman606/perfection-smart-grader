@@ -105,3 +105,16 @@ def server(tmp_db_path):
         session_password="12345678",
     )
     return srv
+
+
+@pytest.fixture(scope="session")
+def qtbot_app():
+    """A single shared QApplication instance for any test that
+    constructs real Qt widgets (as opposed to the async server tests
+    above, which never touch Qt at all). Session-scoped since Qt only
+    allows one QApplication per process — creating a second one raises.
+    Requires QT_QPA_PLATFORM=offscreen in the test environment (no real
+    display available in CI/sandboxes)."""
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    return app

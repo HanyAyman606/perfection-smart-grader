@@ -17,19 +17,14 @@ def _get_app_base_dir():
     """
     Directory that contains the 'admin_dashboard' package/assets at runtime.
 
-    - Nuitka (--standalone / --onefile): __compiled__ is injected as a
-      module-level global and its .containing_dir points at the directory
-      the running binary was extracted/unpacked into (NOT the source tree).
-    - Normal 'python main.py' execution: fall back to walking up from this
-      file's location on disk, same as before.
+    Works both in normal 'python main.py' execution and in a Nuitka
+    --onefile build: in onefile mode, Python resolves __file__ against
+    the per-run temp extraction directory the files were unpacked into,
+    so deriving the base dir from __file__ is reliable in both cases.
+    __compiled__.containing_dir is NOT used here — in --onefile mode it
+    points at the persistent .exe's own directory (e.g. dist\\), not the
+    temp folder the bundled data files actually live in.
     """
-    try:
-        return __compiled__.containing_dir  # type: ignore[name-defined]
-    except NameError:
-        pass
-    if getattr(sys, "frozen", False):
-        # generic fallback for other freezers (PyInstaller, cx_Freeze, etc.)
-        return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -137,12 +132,24 @@ class WelcomeScreen(QWidget):
         self.last_session_slot.addWidget(card, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def open_bubble_studio(self):
-        """Bubble Sheet Studio is a standalone tool that lives outside any
-        workspace — it launches in the system's default browser, same as
-        it used to from inside the dashboard, just reachable from the hub
-        now instead of a sidebar page."""
-        if os.path.exists(STUDIO_HTML_PATH):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(STUDIO_HTML_PATH))
+        import logging
+        log_path = os.path.join(os.environ.get("LOCALAPPDATA", "."), "SmartGrader", "studio_errors.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        logging.basicConfig(filename=log_path, level=logging.DEBUG)
+        logging.debug("open_bubble_studio() called")
+        try:
+            logging.debug(f"STUDIO_HTML_PATH = {STUDIO_HTML_PATH}")
+            logging.debug(f"exists = {os.path.exists(STUDIO_HTML_PATH)}")
+            if os.path.exists(STUDIO_HTML_PATH):
+                result = QDesktopServices.openUrl(QUrl.fromLocalFile(STUDIO_HTML_PATH))
+                logging.debug(f"openUrl returned: {result}")
+                if not result:
+                    logging.debug("openUrl failed, falling back to os.startfile")
+                    os.startfile(STUDIO_HTML_PATH)
+            else:
+                logging.error("STUDIO_HTML_PATH does not exist")
+        except Exception as e:
+            logging.error(f"Exception in open_bubble_studio: {e}", exc_info=True)
 
     def _open_change_password_dialog(self):
         dialog = ChangePasswordDialog(self.orbitron, self.mono, parent=self)

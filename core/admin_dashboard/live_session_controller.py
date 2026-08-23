@@ -27,6 +27,7 @@ class LiveSessionController(QObject):
     log_message = Signal(str)
     phones_updated = Signal(list)     # list[dict] — see WebSocketServer.get_connected_phones_snapshot
     score_count_changed = Signal(int)
+    duplicate_ids_updated = Signal(list)   # list[str] — student_ids resolved as duplicates this session
     session_started = Signal()
     session_stopped = Signal()
 
@@ -35,6 +36,7 @@ class LiveSessionController(QObject):
         self.project_manager = project_manager
         self.server_thread: WebSocketServer | None = None
         self._scores_saved_count = 0
+        self._duplicate_ids: list[str] = []
 
     @property
     def is_running(self) -> bool:
@@ -64,13 +66,16 @@ class LiveSessionController(QObject):
         self.server_thread.phone_disconnected.connect(self._emit_phones_snapshot)
         self.server_thread.score_saved.connect(self._on_score_saved)
         self.server_thread.score_removed.connect(self._on_score_removed)
+        self.server_thread.duplicate_resolved.connect(self._on_duplicate_resolved)
         self.server_thread.start()
 
         GradingRepository.ensure_grades_schema(self.project_manager.db_path)
         existing_grades = GradingRepository.get_group_grades(self.project_manager.db_path, group_name)
         self._scores_saved_count = len(existing_grades)
-        
+        self._duplicate_ids = []
+
         self.score_count_changed.emit(self._scores_saved_count)
+        self.duplicate_ids_updated.emit(list(self._duplicate_ids))
         self.session_started.emit()
 
     def stop(self):
@@ -100,3 +105,20 @@ class LiveSessionController(QObject):
     def _on_score_removed(self, _student_id):
         self._scores_saved_count = max(0, self._scores_saved_count - 1)
         self.score_count_changed.emit(self._scores_saved_count)
+
+    def _on_duplicate_resolved(self, student_id, _action):
+        """A duplicate scan was resolved (kept-previous, overwritten, or
+        discarded) — track it for the dashboard's "Duplicate IDs" list.
+        This is purely informational bookkeeping; it never touches
+        _scores_saved_count, which is adjusted separately (or not at
+        all) by _on_score_saved / _on_score_removed depending on the
+        action taken.
+
+        Same student_id can trigger this more than once in one session
+        (e.g. a phone scans it live, then a second phone that was
+        offline reconnects and syncs another scan of the same id) — the
+        list should still only show that id once, not once per
+        duplicate event."""
+        if student_id not in self._duplicate_ids:
+            self._duplicate_ids.append(student_id)
+            self.duplicate_ids_updated.emit(list(self._duplicate_ids))

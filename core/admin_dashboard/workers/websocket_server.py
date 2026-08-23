@@ -86,6 +86,7 @@ class WebSocketServer(QThread):
     phone_disconnected = Signal(str)
     score_saved = Signal(str, float)
     score_removed = Signal(str)
+    duplicate_resolved = Signal(str, str)   # student_id, action ("overwrite"|"discard_both"|"keep_previous")
 
     def __init__(self, packet_data: dict, db_path: str, session_id: str, group_name: str,
                  session_password: str = DEFAULT_SESSION_PASSWORD,
@@ -200,7 +201,7 @@ class WebSocketServer(QThread):
             pass
         finally:
             if phone_name:
-                self._mark_disconnected(phone_name)
+                self._mark_disconnected(phone_name, websocket)
 
     async def _authenticate(self, websocket) -> Optional[str]:
         try:
@@ -309,11 +310,29 @@ class WebSocketServer(QThread):
         except Exception:
             return False
 
-    def _mark_disconnected(self, name: str):
+    def _mark_disconnected(self, name: str, websocket=None):
+        """Called from a connection's finally block when its socket
+        closes. `websocket` is the specific socket that just closed.
+
+        This must NOT unconditionally stamp the phone as disconnected:
+        when a stale/dead socket gets replaced during reconnect (see
+        _authenticate's "STALE SOCKET" branch), the OLD connection's own
+        read loop also unwinds and lands here via its finally block —
+        but by then a NEW socket may already be registered as the live
+        one for this name. Because asyncio doesn't guarantee that the
+        old connection's cleanup runs before the new connection finishes
+        registering itself, this stale finally-block call can otherwise
+        arrive *after* the reconnect already marked the phone connected
+        again, permanently flipping a genuinely-connected phone back to
+        "disconnected" in the dashboard. Only apply the disconnect if
+        `websocket` is still the socket currently on record for `name`."""
         with self._phones_lock:
             phone = self.phones.get(name)
-            if phone:
-                phone.status = "disconnected"
+            if phone is None:
+                return
+            if websocket is not None and phone.websocket is not websocket:
+                return
+            phone.status = "disconnected"
         self.log_signal.emit(f"DISCONNECTED: {name}")
         self.phone_disconnected.emit(name)
 
@@ -361,6 +380,32 @@ class WebSocketServer(QThread):
 
         # Unknown types are ignored, not fatal — keeps the server
         # forward-compatible with phone-side additions.
+
+    def _print_receipt_async(self, student_id: str, score_fields: dict, phone_name: str):
+        """Fires a physical receipt on a worker thread. score_fields is
+        whatever dict supplied the just-saved score — the raw submit_score
+        message in _handle_submit_score, or new_score_payload in
+        _handle_resolve_duplicate's overwrite branch — read the same way
+        in both cases via .get() with the same defaults, since only the
+        source dict differs between the two call sites.
+
+        proctor_name is the phone's already-authenticated name (see
+        _authenticate); mistakes are exactly what the phone computed
+        during scanning, never recomputed here. Runs on a worker thread
+        since python-escpos does blocking I/O — a slow/stuck printer must
+        never stall this asyncio loop for other connected phones."""
+        receipt_data = build_receipt_data(
+            student_id=student_id,
+            mcq_score=score_fields.get("mcq_score", 0.0),
+            essay_score=score_fields.get("essay_total", 0.0),
+            total_score=score_fields.get("total_score", 0.0),
+            max_score=self.max_score,
+            mistakes=score_fields.get("mistakes", []),
+            quiz_name=self.packet_data.get("exam_name", "Exam"),
+        )
+        asyncio.get_event_loop().run_in_executor(
+            None, print_ultimate_receipt, self.printer_name, receipt_data, phone_name
+        )
 
     async def _handle_submit_score(self, websocket, phone_name: str, msg: dict):
         student_id = msg.get("student_id")
@@ -431,23 +476,7 @@ class WebSocketServer(QThread):
         self.score_saved.emit(student_id, float(msg.get("total_score", 0.0)))
 
         # Fire the physical receipt immediately after a successful save.
-        # proctor_name is the phone's already-authenticated name (see
-        # _authenticate) — mistakes are exactly what the phone computed
-        # during scanning, never recomputed here. Runs on a worker thread
-        # since python-escpos does blocking I/O — a slow/stuck printer must
-        # never stall this asyncio loop for other connected phones.
-        receipt_data = build_receipt_data(
-            student_id=student_id,
-            mcq_score=msg.get("mcq_score", 0.0),
-            essay_score=msg.get("essay_total", 0.0),
-            total_score=msg.get("total_score", 0.0),
-            max_score=self.max_score,
-            mistakes=msg.get("mistakes", []),
-            quiz_name=self.packet_data.get("exam_name", "Exam"),
-        )
-        asyncio.get_event_loop().run_in_executor(
-            None, print_ultimate_receipt, self.printer_name, receipt_data, phone_name
-        )
+        self._print_receipt_async(student_id, msg, phone_name)
 
     async def _handle_resolve_duplicate(self, websocket, phone_name: str, msg: dict):
         student_id = msg.get("student_id")
@@ -467,25 +496,19 @@ class WebSocketServer(QThread):
                     answer_version=payload.get("answer_version"),
                     group_type=payload.get("group_type"),
                 )
-                self._bump_scan_count(phone_name)
-                self.score_saved.emit(student_id, float(payload.get("total_score", 0.0)))
+                # Overwriting replaces the existing row in place (see
+                # GradingRepository.overwrite_grade) — it is not a new
+                # scan. Neither the per-phone scan_count nor the
+                # session's running "scores saved" total should move;
+                # those only advance on a genuinely new submit_score
+                # (see _handle_submit_score). Deliberately no
+                # _bump_scan_count / score_saved.emit here.
 
-                # Same as a fresh submit_score success — a new grade was
-                # actually saved (the old one replaced), so print a receipt
-                # for it. discard_both/keep_previous never reach here since
+                # Still print a receipt — the student walks away with a
+                # receipt reflecting the score that's now actually saved.
+                # discard_both/keep_previous never reach here since
                 # neither produces a new saved grade.
-                receipt_data = build_receipt_data(
-                    student_id=student_id,
-                    mcq_score=payload.get("mcq_score", 0.0),
-                    essay_score=payload.get("essay_total", 0.0),
-                    total_score=payload.get("total_score", 0.0),
-                    max_score=self.max_score,
-                    mistakes=payload.get("mistakes", []),
-                    quiz_name=self.packet_data.get("exam_name", "Exam"),
-                )
-                asyncio.get_event_loop().run_in_executor(
-                    None, print_ultimate_receipt, self.printer_name, receipt_data, phone_name
-                )
+                self._print_receipt_async(student_id, payload, phone_name)
 
             elif action == "discard_both":
                 await self._run_db(self.repo.discard_grade, student_id)
@@ -504,6 +527,12 @@ class WebSocketServer(QThread):
                 "message": f"Server failed to resolve duplicate: {e}",
             }))
             return
+
+        # A duplicate was encountered and resolved (whichever way) —
+        # record it for the dashboard's "Duplicate IDs" list regardless
+        # of which action was taken, since all three mean a duplicate
+        # scan of this student_id genuinely happened.
+        self.duplicate_resolved.emit(student_id, action)
 
         await websocket.send(json.dumps({
             "type": "resolve_duplicate_result",

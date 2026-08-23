@@ -34,7 +34,24 @@ class LiveMonitorMixin:
         self.card_scores_saved = StatCard(
             "Scores Saved", "0", SKY_AQUA, self.fonts.orbitron, self.fonts.mono, "This session"
         )
-        stats_row.addWidget(self.card_scores_saved)
+        stats_row.addWidget(self.card_scores_saved, stretch=1)
+
+        dup_col = QVBoxLayout()
+        dup_label = QLabel("DUPLICATE IDS")
+        dup_label.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
+        dup_label.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px;")
+        self.duplicates_list = QListWidget()
+        self.duplicates_list.setFixedHeight(130)
+        self.duplicates_list.setMaximumWidth(320)
+        self.duplicates_list.setStyleSheet(
+            f"QListWidget {{ background-color: {BG_DEEP}; color: {WARN_COLOR}; "
+            f"border: 1px solid {TRUE_AZURE}; border-radius: 8px; padding: 10px; "
+            f"font-family: Consolas; font-size: 12px; }}"
+        )
+        dup_col.addWidget(dup_label)
+        dup_col.addWidget(self.duplicates_list)
+        stats_row.addLayout(dup_col)
+
         content_layout.addLayout(stats_row)
 
         split_row = QHBoxLayout()
@@ -68,7 +85,7 @@ class LiveMonitorMixin:
 
         split_row.addLayout(log_col, stretch=1)
         split_row.addLayout(phones_col)
-        content_layout.addLayout(split_row)
+        content_layout.addLayout(split_row, stretch=1)
 
         btn_row = QHBoxLayout()
         btn_stop = ThemedButton(
@@ -125,6 +142,7 @@ class LiveMonitorMixin:
 
             self.monitor_log.clear()
             self.phones_list.clear()
+            self.duplicates_list.clear()
             self.sub_stack.setCurrentIndex(2)
 
         except Exception as e:
@@ -142,6 +160,11 @@ class LiveMonitorMixin:
 
     def _render_score_count(self, count):
         self.card_scores_saved.update_value(str(count))
+
+    def _render_duplicates(self, duplicate_ids):
+        self.duplicates_list.clear()
+        for student_id in duplicate_ids:
+            self.duplicates_list.addItem(f"⚠ {student_id}")
 
     def stop_server_and_return(self):
         self.live_session.stop()
