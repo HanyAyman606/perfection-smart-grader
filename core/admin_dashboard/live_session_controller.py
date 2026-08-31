@@ -1,26 +1,7 @@
-"""
-live_session_controller.py
-----------------------------
-Owns the lifecycle of one live grading session's background WebSocket
-server: starting it, stopping it, and turning its raw signals (phone
-connect/disconnect, score saved/removed, log lines) into the two pieces
-of state a UI actually needs to render — a phone-status snapshot and a
-running "scores saved" count.
-
-This used to live directly inside SessionManagerPage (a QWidget also
-responsible for building three whole screens of layout). Pulling it out
-means the Live Monitoring screen's widgets don't need to know anything
-about WebSocketServer, QThread lifecycles, or how a score count is
-derived — they just connect to this controller's signals, the same
-Observer pattern group_registry already uses elsewhere in this codebase.
-It also means this piece is unit-testable without instantiating any Qt
-widgets at all.
-"""
-
 from PySide6.QtCore import QObject, Signal
 
-from admin_dashboard.workers.websocket_server import WebSocketServer
-from admin_dashboard.grading_repository import new_session_id, GradingRepository
+from .workers.websocket_server import WebSocketServer
+from .grading_repository import new_session_id, GradingRepository
 
 
 class LiveSessionController(QObject):
@@ -28,15 +9,17 @@ class LiveSessionController(QObject):
     phones_updated = Signal(list)     # list[dict] — see WebSocketServer.get_connected_phones_snapshot
     score_count_changed = Signal(int)
     duplicate_ids_updated = Signal(list)   # list[str] — student_ids resolved as duplicates this session
+    proctor_stats_updated = Signal(list)   # list[dict] — see GradingRepository.get_group_proctor_stats
     session_started = Signal()
     session_stopped = Signal()
 
     def __init__(self, project_manager):
         super().__init__()
         self.project_manager = project_manager
-        self.server_thread: WebSocketServer | None = None
+        self.server_thread = None
         self._scores_saved_count = 0
         self._duplicate_ids: list[str] = []
+        self._group_name = None
 
     @property
     def is_running(self) -> bool:
@@ -47,11 +30,10 @@ class LiveSessionController(QObject):
         return self._scores_saved_count
 
     def start(self, group_name: str, master_packet: dict, printer_name: str = "Xprinter XP-80"):
-        """Raises RuntimeError if a session is already running — the
-        caller is expected to check `is_running` first for a friendlier
-        message, but this guards the invariant either way."""
         if self.is_running:
             raise RuntimeError("A grading session is already live.")
+
+        self._group_name = group_name
 
         self.server_thread = WebSocketServer(
             packet_data=master_packet,
@@ -76,6 +58,7 @@ class LiveSessionController(QObject):
 
         self.score_count_changed.emit(self._scores_saved_count)
         self.duplicate_ids_updated.emit(list(self._duplicate_ids))
+        self._refresh_proctor_stats()
         self.session_started.emit()
 
     def stop(self):
@@ -85,40 +68,32 @@ class LiveSessionController(QObject):
         self.session_stopped.emit()
 
     def reset_score_count(self):
-        """Lets external code (e.g. a 'Clear Results' action) resync this
-        controller's counter after grades were deleted out from under it,
-        without needing to know this class tracks a running total at all."""
         self._scores_saved_count = 0
         self.score_count_changed.emit(0)
+        self._refresh_proctor_stats()
 
     def _emit_phones_snapshot(self, _phone_name=None):
-        """Connected/disconnected both just mean 'redraw from the source
-        of truth' — the snapshot is cheap and always correct, so there's
-        no need to hand-patch individual entries."""
         self.phones_updated.emit(self.server_thread.get_connected_phones_snapshot())
+
+    def _refresh_proctor_stats(self):
+        if not self._group_name:
+            return
+        stats = GradingRepository.get_group_proctor_stats(self.project_manager.db_path, self._group_name)
+        self.proctor_stats_updated.emit(stats)
 
     def _on_score_saved(self, _student_id, _score):
         self._scores_saved_count += 1
         self.score_count_changed.emit(self._scores_saved_count)
         self._emit_phones_snapshot()
+        self._refresh_proctor_stats()
 
     def _on_score_removed(self, _student_id):
         self._scores_saved_count = max(0, self._scores_saved_count - 1)
         self.score_count_changed.emit(self._scores_saved_count)
+        self._refresh_proctor_stats()
 
     def _on_duplicate_resolved(self, student_id, _action):
-        """A duplicate scan was resolved (kept-previous, overwritten, or
-        discarded) — track it for the dashboard's "Duplicate IDs" list.
-        This is purely informational bookkeeping; it never touches
-        _scores_saved_count, which is adjusted separately (or not at
-        all) by _on_score_saved / _on_score_removed depending on the
-        action taken.
-
-        Same student_id can trigger this more than once in one session
-        (e.g. a phone scans it live, then a second phone that was
-        offline reconnects and syncs another scan of the same id) — the
-        list should still only show that id once, not once per
-        duplicate event."""
         if student_id not in self._duplicate_ids:
             self._duplicate_ids.append(student_id)
             self.duplicate_ids_updated.emit(list(self._duplicate_ids))
+        self._refresh_proctor_stats()

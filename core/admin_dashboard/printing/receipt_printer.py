@@ -1,19 +1,5 @@
-"""
-printing/receipt_printer.py
-----------------------------
-Prints a physical receipt on the proctor's desktop thermal printer,
-immediately after a submit_score is saved successfully — see
-workers/websocket_server.py:_handle_submit_score, the only call site.
-
-build_receipt_data() is the ONLY place that maps submit_score's wire
-field names (student_id, mcq_score, essay_total, total_score, mistakes)
-into this module's own shape — print_ultimate_receipt() itself never
-needs to know about the websocket payload format.
-"""
-
 from datetime import datetime
 from escpos.printer import Win32Raw
-
 
 def build_receipt_data(
     *,
@@ -24,10 +10,10 @@ def build_receipt_data(
     max_score: float,
     mistakes: list[dict],
     quiz_name: str,
+    score_adjustment: float = 0.0,
+    zero_override: bool = False,
+    adjustment_note: str | None = None,
 ) -> dict:
-    """`mistakes` here are exactly what the phone sent — computed
-    client-side during scanning (Mistake.toJson() in exam_models.dart) —
-    NEVER recomputed against the model answer key on this side."""
     return {
         "quiz_name": quiz_name,
         "student_id": student_id,
@@ -35,12 +21,14 @@ def build_receipt_data(
         "max_score": max_score,
         "mcq_score": mcq_score,
         "essay_score": essay_score,
+        "score_adjustment": score_adjustment,
+        "zero_override": zero_override,
+        "adjustment_note": adjustment_note,
         "mistakes": [
             {"q": m.get("question"), "correct": m.get("correct"), "given": m.get("given")}
             for m in mistakes
         ],
     }
-
 
 def print_ultimate_receipt(printer_name, student_data, proctor_name):
     try:
@@ -88,6 +76,22 @@ def print_ultimate_receipt(printer_name, student_data, proctor_name):
         p.text(f"MCQ Score: {student_data['mcq_score']} | Essay Score: {student_data['essay_score']}\n")
         p._raw(BOLD_OFF)
 
+        zero_override = student_data.get('zero_override', False)
+        score_adjustment = student_data.get('score_adjustment', 0.0)
+        adjustment_note = student_data.get('adjustment_note')
+
+        if zero_override or score_adjustment:
+            p.text("-" * 42 + "\n")
+            p._raw(BOLD_ON)
+            if zero_override:
+                p.text("PAPER ZEROED\n")
+            else:
+                sign = "+" if score_adjustment > 0 else ""
+                p.text(f"ADJUSTMENT: {sign}{score_adjustment:g}\n")
+            p._raw(BOLD_OFF)
+            if adjustment_note:
+                p.text(f"Reason: {adjustment_note}\n")
+
         p.text("-" * 42 + "\n")
 
         p._raw(BOLD_ON)
@@ -126,10 +130,6 @@ def print_ultimate_receipt(printer_name, student_data, proctor_name):
         p.close()
 
     except Exception as e:
-        # Must never crash or block a grade save — the grade is already
-        # committed to roster.db by the time this runs (see
-        # websocket_server.py). A print failure (printer off, out of
-        # paper, wrong name) is logged, never raised.
         import logging, os
         log_path = os.path.join(os.environ.get("LOCALAPPDATA", "."), "SmartGrader", "print_errors.log")
         os.makedirs(os.path.dirname(log_path), exist_ok=True)

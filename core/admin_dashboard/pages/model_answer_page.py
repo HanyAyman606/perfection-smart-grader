@@ -77,7 +77,7 @@ class ModelAnswerPage(QWidget):
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll.setStyleSheet("border: none; background: transparent;")
         self.rows_container = QWidget()
         self.rows_container.setStyleSheet("background: transparent;")

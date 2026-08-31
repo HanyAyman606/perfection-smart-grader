@@ -402,6 +402,9 @@ class WebSocketServer(QThread):
             max_score=self.max_score,
             mistakes=score_fields.get("mistakes", []),
             quiz_name=self.packet_data.get("exam_name", "Exam"),
+            score_adjustment=score_fields.get("score_adjustment", 0.0),
+            zero_override=score_fields.get("zero_override", False),
+            adjustment_note=score_fields.get("adjustment_note"),
         )
         asyncio.get_event_loop().run_in_executor(
             None, print_ultimate_receipt, self.printer_name, receipt_data, phone_name
@@ -428,11 +431,25 @@ class WebSocketServer(QThread):
                         "score": existing["score"],
                         "answer_version": existing["answer_version"],
                         "timestamp": existing["timestamp"],
+                        "proctor_name": existing["proctor_name"],
+                        "group_type": existing.get("group_type"),
+                        "mcq_score": existing.get("mcq_score"),
+                        "essay_total": existing.get("essay_total"),
+                        "score_adjustment": existing.get("score_adjustment"),
+                        "zero_override": existing.get("zero_override"),
+                        "adjustment_note": existing.get("adjustment_note"),
                     },
                     "incoming": {
                         "score": msg.get("total_score"),
                         "answer_version": msg.get("answer_version"),
                         "timestamp": msg.get("timestamp"),
+                        "proctor_name": phone_name,
+                        "group_type": msg.get("group_type"),
+                        "mcq_score": msg.get("mcq_score"),
+                        "essay_total": msg.get("essay_total"),
+                        "score_adjustment": msg.get("score_adjustment"),
+                        "zero_override": msg.get("zero_override"),
+                        "adjustment_note": msg.get("adjustment_note"),
                     },
                 }))
                 return
@@ -446,6 +463,11 @@ class WebSocketServer(QThread):
                 mistakes=msg.get("mistakes", []),
                 answer_version=msg.get("answer_version"),
                 group_type=msg.get("group_type"),
+                proctor_name=phone_name,
+                client_timestamp=msg.get("timestamp"),
+                score_adjustment=msg.get("score_adjustment", 0.0),
+                zero_override=msg.get("zero_override", False),
+                adjustment_note=msg.get("adjustment_note"),
             )
         except Exception as e:
             # Without this, an exception here (locked DB, bad payload,
@@ -488,6 +510,7 @@ class WebSocketServer(QThread):
                 payload = msg.get("new_score_payload") or {}
                 await self._run_db(
                     self.repo.overwrite_grade,
+                    group_name=self.group_name,
                     student_id=student_id,
                     mcq_score=payload.get("mcq_score", 0.0),
                     essay_total=payload.get("essay_total", 0.0),
@@ -495,6 +518,11 @@ class WebSocketServer(QThread):
                     mistakes=payload.get("mistakes", []),
                     answer_version=payload.get("answer_version"),
                     group_type=payload.get("group_type"),
+                    proctor_name=phone_name,
+                    client_timestamp=payload.get("timestamp"),
+                    score_adjustment=payload.get("score_adjustment", 0.0),
+                    zero_override=payload.get("zero_override", False),
+                    adjustment_note=payload.get("adjustment_note"),
                 )
                 # Overwriting replaces the existing row in place (see
                 # GradingRepository.overwrite_grade) — it is not a new
@@ -511,7 +539,7 @@ class WebSocketServer(QThread):
                 self._print_receipt_async(student_id, payload, phone_name)
 
             elif action == "discard_both":
-                await self._run_db(self.repo.discard_grade, student_id)
+                await self._run_db(self.repo.discard_grade, self.group_name, student_id)
                 self.score_removed.emit(student_id)
 
                 # "keep_previous" -> no DB action, no receipt.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>Bubble Sheet Studio</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <style>
   :root{
@@ -143,7 +143,7 @@
 </div>
 
 <script>
-pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.6.347/pdf.worker.min.js";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 document.querySelectorAll('.tab-btn').forEach(b=>{
   b.addEventListener('click',()=>{
@@ -180,50 +180,42 @@ function buildCardSVG(){
   const canvasW = 1180; 
   const idPanelW = 340;
   const mcqPanelW = 710; 
-  const panelY = 95; // Increased from 70 to give space below the anchor box
-
-  // ID Panel Height Calculation
+  const panelY = 95;
+  
   const idMaxRows = Math.max(idLetters.length, 10);
-  const boxY = 36; // Moved up to allocate more square space
-  const boxSize = 50; // Expanded sizes
+  const boxY = 36;
+  const boxSize = 50; 
   const colHeaderY = boxY + boxSize + 15;
   const rowStartY = colHeaderY + 22;
   const lastIdRowY = rowStartY + (idMaxRows - 1) * rowGap;
   const idReqH = lastIdRowY + r + 30;
 
-  // MCQ Panel Dynamic Height Calculation
   const col1 = Math.ceil(numQuestions / 3);
   const col2 = Math.ceil((numQuestions - col1) / 2);
   const col3 = numQuestions - col1 - col2;
   const cols = [col1, col2, col3];
-
+  
   const actualMaxRows = Math.max(col1, col2, col3, 1);
-  const maxRowsForHeight = Math.max(actualMaxRows, 10); // Floor fixed to prevent panel height collapse
-
-  const rightHeaderH = 85;
+  const maxRowsForHeight = Math.max(actualMaxRows, 10);
+  
+  const rightHeaderH = 85; 
   const lastMcqRowYForHeight = rightHeaderH + (maxRowsForHeight - 1) * rowGap;
   const mcqReqH = lastMcqRowYForHeight + r + 30;
 
   const panelH = Math.max(idReqH, mcqReqH);
-  const canvasH = panelY + panelH + 50;
-
-  // Custom Dynamic Row Gap Logic
+  const canvasH = panelY + panelH + 50; 
+  
   let dynamicRowGap = rowGap;
   if (actualMaxRows < 10) {
-     const defaultSpan = (10 - 1) * rowGap;
-     dynamicRowGap = defaultSpan / actualMaxRows; // Dynamically expands gaps specifically for low question counts
+     const defaultSpan = (10 - 1) * rowGap; 
+     dynamicRowGap = defaultSpan / actualMaxRows; 
   }
 
   let s = [];
   s.push(`<rect x="0" y="0" width="${canvasW}" height="${canvasH}" fill="#ffffff"/>`);
-
-  // --- OUTER FRAME & CORNER TARGET BOXES ---
   s.push(`<rect x="15" y="15" width="${canvasW - 30}" height="${canvasH - 30}" fill="none" stroke="${accent}" stroke-width="7"/>`);
-
-  // Solid Anchor Box
   s.push(`<rect x="15" y="15" width="60" height="60" fill="${accent}"/>`);
 
-  // --- LEFT PANEL (STUDENT ID) ---
   const idX = 40;
   s.push(`<g transform="translate(${idX},${panelY})">`);
   s.push(`<rect x="0" y="0" width="${idPanelW}" height="${panelH}" rx="4" fill="#fff" stroke="${accent}" stroke-width="4.5"/>`);
@@ -241,11 +233,11 @@ function buildCardSVG(){
   const colLabels = ['LETTER']; for(let i=1; i<=digitCols; i++) colLabels.push('DIGIT '+i);
   const colValues = [idLetters]; for(let i=0; i<digitCols; i++) colValues.push('0123456789'.split(''));
   const colCenters = []; for(let i=0; i<nBoxes; i++) colCenters.push(boxStartX + i*(boxSize+16) + boxSize/2);
-
-  colCenters.forEach((cx,i)=>{
-    s.push(`<text x="${cx.toFixed(1)}" y="${colHeaderY}" font-size="10" font-weight="bold" fill="${accent}" text-anchor="middle">${esc(colLabels[i])}</text>`);
+  
+  colCenters.forEach((cx,i)=>{ 
+    s.push(`<text x="${cx.toFixed(1)}" y="${colHeaderY}" font-size="10" font-weight="bold" fill="${accent}" text-anchor="middle">${esc(colLabels[i])}</text>`); 
   });
-
+  
   colCenters.forEach((cx,ci)=>{
     const vals = colValues[ci]; const n = vals.length;
     vals.forEach((v,ri)=>{
@@ -257,30 +249,26 @@ function buildCardSVG(){
 
   for (let i = 0; i < nBoxes - 1; i++) {
     const lineX = colCenters[i] + (boxSize / 2) + 8;
-    // THINNED ID PANEL DIVIDERS
     s.push(`<line x1="${lineX.toFixed(1)}" y1="${colHeaderY - 10}" x2="${lineX.toFixed(1)}" y2="${panelH - 12}" stroke="${accent}" stroke-width="1.0" opacity="0.4"/>`);
   }
   s.push(`</g>`);
 
-  // --- RIGHT PANEL (MULTIPLE CHOICE) ---
   const mcqX = 410;
   s.push(`<g transform="translate(${mcqX},${panelY})">`);
   s.push(`<rect x="0" y="0" width="${mcqPanelW}" height="${panelH}" rx="4" fill="#fff" stroke="${accent}" stroke-width="4.5"/>`);
   s.push(`<text x="${mcqPanelW/2}" y="25" font-size="15" font-weight="bold" fill="${accent}" text-anchor="middle">MULTIPLE CHOICE ANSWER PANEL</text>`);
-
   s.push(`<line x1="10" y1="36" x2="${mcqPanelW - 10}" y2="36" stroke="${accent}" stroke-width="2.5"/>`);
 
   const groupGapX = 18;
   const qColW = (mcqPanelW - 20 - (2 * groupGapX)) / 3;
-  const bubbleGap = r * 2.8;
+  const bubbleGap = r * 2.8; 
 
   let currentQ = 1;
   for(let g=0; g<3; g++){
     const gx = 10 + g*(qColW + groupGapX);
     const numInCol = cols[g];
-
+    
     if (g > 0) {
-       // THINNED MCQ VERTICAL COLUMN DIVIDERS
        s.push(`<line x1="${(gx - groupGapX/2).toFixed(1)}" y1="36" x2="${(gx - groupGapX/2).toFixed(1)}" y2="${panelH - 12}" stroke="${accent}" stroke-width="1.2" opacity="0.6"/>`);
     }
 
@@ -289,14 +277,14 @@ function buildCardSVG(){
        s.push(`<text x="${(gx + qColW/2).toFixed(1)}" y="58" font-size="11" font-weight="bold" fill="${accent}" text-anchor="middle">QUESTIONS ${currentQ}-${endQ}</text>`);
     }
 
-    const numX = gx + 12;
-    const bubbleStartX = numX + 56;
+    const numX = gx + 12; 
+    const bubbleStartX = numX + 56; 
 
     for(let row=0; row<numInCol; row++){
-      const ry = rightHeaderH + row * dynamicRowGap;
-
+      const ry = rightHeaderH + row * dynamicRowGap; 
+      
       s.push(`<text x="${numX.toFixed(1)}" y="${(ry+4).toFixed(1)}" font-size="13" font-weight="bold" fill="${accent}">Q${currentQ}.</text>`);
-
+      
       for(let c=0; c<numChoices; c++){
         const cx = bubbleStartX + c * bubbleGap;
         s.push(`<circle cx="${cx.toFixed(1)}" cy="${ry.toFixed(1)}" r="${r}" fill="none" stroke="${accent}" stroke-width="4.5"/>`);
@@ -313,7 +301,6 @@ function buildCardSVG(){
           const lineY = rightHeaderH + row * dynamicRowGap + (dynamicRowGap / 2);
           const lineXStart = gx;
           const lineXEnd = gx + qColW;
-          // THINNED MCQ HORIZONTAL ROW DIVIDERS
           s.push(`<line x1="${lineXStart.toFixed(1)}" y1="${lineY.toFixed(1)}" x2="${lineXEnd.toFixed(1)}" y2="${lineY.toFixed(1)}" stroke="${accent}" stroke-width="1.0" opacity="0.3"/>`);
       }
   }
@@ -553,7 +540,14 @@ document.getElementById('applyBtn').addEventListener('click', async ()=>{
     const PDF_POINT_TO_PX = 300/72; 
     const targetWidthPx = Math.round(bRectPre.w * PDF_POINT_TO_PX);
     const raster = await rasterizeCard(targetWidthPx);
-    const pngBytes = await (await fetch(raster.dataUrl)).arrayBuffer();
+    
+    // Bypass fetch() to avoid file:// protocol CORS errors
+    const base64Data = raster.dataUrl.split(',')[1];
+    const binaryString = atob(base64Data);
+    const pngBytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      pngBytes[i] = binaryString.charCodeAt(i);
+    }
 
     status.textContent = 'Editing PDF and embedding template...';
     const { PDFDocument, rgb } = PDFLib;
@@ -567,7 +561,10 @@ document.getElementById('applyBtn').addEventListener('click', async ()=>{
     bPage.drawImage(pngImage, { x: bRect.x, y: bRect.y, width: bRect.w, height: bRect.h });
 
     editedPdfBytes = await pdfDoc.save();
-    status.textContent = 'Done — preview below.';
+    
+    // Reveal the download buttons immediately BEFORE attempting the preview
+    document.getElementById('exportRow').style.display='flex';
+    status.textContent = 'PDF Built! You can download it now. (Attempting to generate preview...)';
 
     const previewDoc = await pdfjsLib.getDocument({data: editedPdfBytes.slice()}).promise;
     const previewPage = await previewDoc.getPage(bp);
@@ -577,20 +574,26 @@ document.getElementById('applyBtn').addEventListener('click', async ()=>{
     await previewPage.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise;
     resultWrap.innerHTML = '<div class="pdf-preview-wrap"></div>';
     resultWrap.querySelector('.pdf-preview-wrap').appendChild(canvas);
+    
+    status.textContent = 'Done — preview generated below.';
 
-    document.getElementById('exportRow').style.display='flex';
   }catch(err){
     console.error(err);
-    status.textContent = 'Error: '+err.message;
+    status.textContent = 'PDF generated, but live preview failed ('+err.message+'). You can still download the file below!';
   }
 });
 
-document.getElementById('downloadPdfBtn').addEventListener('click',()=>{
-  if(!editedPdfBytes) return;
-  const blob = new Blob([editedPdfBytes], {type:'application/pdf'});
-  const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='edited_quiz.pdf'; a.click();
-  URL.revokeObjectURL(url);
+document.getElementById('downloadPdfBtn').addEventListener('click', () => {
+  if (!editedPdfBytes) return;
+  const blob = new Blob([editedPdfBytes], { type: 'application/pdf' });
+  const fileUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = fileUrl;
+  a.download = 'edited_quiz.pdf';
+  a.click();
+  URL.revokeObjectURL(fileUrl);
 });
+
 document.getElementById('downloadPngBtn').addEventListener('click',()=>{
   const canvas = document.querySelector('#resultWrap canvas');
   if(!canvas) return;

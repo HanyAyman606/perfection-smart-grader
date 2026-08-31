@@ -8,7 +8,7 @@ workspace via ProjectManager.
 
 from PySide6.QtWidgets import (
     QLabel, QGridLayout, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QScrollArea, QWidget, QPushButton, QMessageBox, QLineEdit
+    QScrollArea, QWidget, QPushButton, QMessageBox, QLineEdit, QVBoxLayout
 )
 from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtCore import QRegularExpression
@@ -53,6 +53,18 @@ class SetupPage(QWidget):
 
     def _build_ui(self, content_layout):
         orbitron = self.fonts.orbitron
+
+        self.main_scroll = QScrollArea()
+        self.main_scroll.setWidgetResizable(True)
+        self.main_scroll.setStyleSheet("border: none; background: transparent;")
+        self.form_container = QWidget()
+        self.form_container.setStyleSheet("background: transparent;")
+        self.form_layout = QVBoxLayout(self.form_container)
+        self.form_layout.setContentsMargins(0, 0, 0, 0)
+        self.form_layout.setSpacing(10)
+        
+        self.main_scroll.setWidget(self.form_container)
+        content_layout.addWidget(self.main_scroll)
 
         # -- Exam mode + MCQ count -----------------------------------
         top_grid = QGridLayout()
@@ -101,15 +113,15 @@ class SetupPage(QWidget):
         top_grid.addWidget(self.id_letter_count_spin, 1, 3)
         top_grid.addWidget(self._make_label("ID LETTERS:"), 2, 0)
         top_grid.addWidget(self.id_letters_edit, 2, 1, 1, 3)
-        content_layout.addLayout(top_grid)
+        self.form_layout.addLayout(top_grid)
 
         # -- MCQ mark ranges ------------------------------------------
         ranges_lbl = self._make_label("MARK RANGES:")
-        content_layout.addWidget(ranges_lbl)
+        self.form_layout.addWidget(ranges_lbl)
 
         self.range_builder = MCQRangeBuilder(orbitron, self.fonts.mono)
         self.range_builder.set_total_questions(self.mcq_count_spin.value())
-        content_layout.addWidget(self.range_builder)
+        self.form_layout.addWidget(self.range_builder)
 
         # -- Essay config -----------------------------------------------
         self.essay_checkbox = QCheckBox(" INCLUDE WRITTEN / ESSAY QUESTIONS")
@@ -145,29 +157,25 @@ class SetupPage(QWidget):
         self.essay_count_lbl.setVisible(False)
         self.essay_count_spin.setVisible(False)
 
-        content_layout.addLayout(essay_row)
+        self.form_layout.addLayout(essay_row)
 
         # -- Essay per-question point inputs (generated dynamically) ------
-        self.essay_scroll = QScrollArea()
-        self.essay_scroll.setWidgetResizable(True)
-        self.essay_scroll.setStyleSheet("border: none; background: transparent;")
         self.essay_container = QWidget()
         self.essay_container.setStyleSheet("background: transparent;")
         self.essay_layout = QGridLayout(self.essay_container)
-        self.essay_scroll.setWidget(self.essay_container)
-        self.essay_scroll.setVisible(False)
-        content_layout.addWidget(self.essay_scroll)
+        self.essay_container.setVisible(False)
+        self.form_layout.addWidget(self.essay_container)
 
         self.essay_checkbox.toggled.connect(self.toggle_essay_inputs)
 
 
-        content_layout.addStretch()
+        self.form_layout.addStretch()
 
         # -- Grand total summary ------------------------------------------
         self.total_summary_lbl = QLabel("")
         self.total_summary_lbl.setFont(QFont(orbitron, 12, QFont.Weight.Bold))
         self.total_summary_lbl.setStyleSheet(f"color: {NEON_PINK};")
-        content_layout.addWidget(self.total_summary_lbl)
+        self.form_layout.addWidget(self.total_summary_lbl)
 
         self.range_builder.changed.connect(self._refresh_grand_total)
         self._refresh_grand_total()
@@ -178,7 +186,7 @@ class SetupPage(QWidget):
             font_size=12, padding="15px", extra_style="margin-top: 10px;",
         )
         btn_save_blueprint.clicked.connect(self.save_blueprint)
-        content_layout.addWidget(btn_save_blueprint)
+        self.form_layout.addWidget(btn_save_blueprint)
 
 
     @staticmethod
@@ -245,7 +253,7 @@ class SetupPage(QWidget):
         self.essay_count_lbl.setVisible(True)
         self.essay_count_spin.setVisible(True)
         self.essay_count_spin.setEnabled(True)
-        self.essay_scroll.setVisible(True)
+        self.essay_container.setVisible(True)
 
         self.essay_count_spin.blockSignals(True)
         self.essay_count_spin.setValue(self.SHAMEL_ESSAY_COUNT)
@@ -266,7 +274,7 @@ class SetupPage(QWidget):
         self.essay_count_lbl.setVisible(checked)
         self.essay_count_spin.setVisible(checked)
         self.essay_count_spin.setEnabled(checked)
-        self.essay_scroll.setVisible(checked)
+        self.essay_container.setVisible(checked)
         if checked:
             self.generate_essay_inputs()
         else:
@@ -394,7 +402,7 @@ class SetupPage(QWidget):
         self.essay_count_lbl.setVisible(has_essays)
         self.essay_count_spin.setVisible(has_essays)
         self.essay_count_spin.setEnabled(has_essays)
-        self.essay_scroll.setVisible(has_essays)
+        self.essay_container.setVisible(has_essays)
 
         if has_essays and essay_map:
             self.essay_count_spin.blockSignals(True)

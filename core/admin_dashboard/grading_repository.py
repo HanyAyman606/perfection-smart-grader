@@ -68,6 +68,10 @@ GRADES_TABLE_SQL = """
         final_score REAL NOT NULL,
         answer_version TEXT,
         group_type TEXT,
+        proctor_name TEXT,
+        score_adjustment REAL DEFAULT 0,
+        zero_override INTEGER DEFAULT 0,
+        adjustment_note TEXT,
         mistakes_log TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions (session_id),
@@ -97,7 +101,7 @@ class GradingRepository:
         with self._connect() as conn:
             conn.execute(SESSIONS_TABLE_SQL)
             conn.execute(GRADES_TABLE_SQL)
-            self._ensure_group_type_column(conn)
+            self._ensure_columns(conn)
 
     @staticmethod
     def ensure_grades_schema(db_path: str):
@@ -106,17 +110,24 @@ class GradingRepository:
         with _sqlite_connection(db_path) as conn:
             conn.execute(SESSIONS_TABLE_SQL)
             conn.execute(GRADES_TABLE_SQL)
-            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(grades)")}
-            if "group_type" not in existing_cols:
-                conn.execute("ALTER TABLE grades ADD COLUMN group_type TEXT")
+            GradingRepository._ensure_columns_static(conn)
 
-    def _ensure_group_type_column(self, conn):
-        """Migration for grades tables created before group_type existed —
-        CREATE TABLE IF NOT EXISTS alone won't add a column to a table
-        that's already there."""
+    @staticmethod
+    def _ensure_columns_static(conn):
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(grades)")}
         if "group_type" not in existing_cols:
             conn.execute("ALTER TABLE grades ADD COLUMN group_type TEXT")
+        if "proctor_name" not in existing_cols:
+            conn.execute("ALTER TABLE grades ADD COLUMN proctor_name TEXT")
+        if "score_adjustment" not in existing_cols:
+            conn.execute("ALTER TABLE grades ADD COLUMN score_adjustment REAL DEFAULT 0")
+        if "zero_override" not in existing_cols:
+            conn.execute("ALTER TABLE grades ADD COLUMN zero_override INTEGER DEFAULT 0")
+        if "adjustment_note" not in existing_cols:
+            conn.execute("ALTER TABLE grades ADD COLUMN adjustment_note TEXT")
+
+    def _ensure_columns(self, conn):
+        self._ensure_columns_static(conn)
 
     def start_session(self, group_name: str):
         """Call once when 'Start Live Grading' is confirmed — registers
@@ -131,49 +142,93 @@ class GradingRepository:
     def get_existing_grade(self, student_id: str) -> Optional[dict]:
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT final_score, answer_version, mistakes_log, timestamp "
+                "SELECT final_score, answer_version, mistakes_log, timestamp, proctor_name "
                 "FROM grades WHERE session_id = ? AND student_id = ?",
                 (self.session_id, student_id),
             )
             row = cursor.fetchone()
         if not row:
             return None
-        final_score, answer_version, mistakes_log, timestamp = row
+        final_score, answer_version, mistakes_log, timestamp, proctor_name = row
         return {
             "score": final_score,
             "answer_version": answer_version,
             "mistakes": json.loads(mistakes_log) if mistakes_log else [],
             "timestamp": timestamp,
+            "proctor_name": proctor_name,
         }
 
     def save_grade(self, student_id: str, mcq_score: float, essay_total: float,
                     total_score: float, mistakes: list, answer_version: Optional[str],
-                    group_type: Optional[str] = None):
+                    group_type: Optional[str] = None, proctor_name: Optional[str] = None,
+                    client_timestamp: Optional[str] = None, score_adjustment: float = 0.0,
+                    zero_override: bool = False, adjustment_note: Optional[str] = None):
         with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO grades (session_id, student_id, mcq_score, essay_total, "
-                "final_score, answer_version, group_type, mistakes_log) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (self.session_id, student_id, mcq_score, essay_total, total_score,
-                 answer_version, group_type, json.dumps(mistakes)),
-            )
+            if client_timestamp:
+                conn.execute(
+                    "INSERT INTO grades (session_id, student_id, mcq_score, essay_total, "
+                    "final_score, answer_version, group_type, proctor_name, score_adjustment, "
+                    "zero_override, adjustment_note, mistakes_log, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (self.session_id, student_id, mcq_score, essay_total, total_score,
+                     answer_version, group_type, proctor_name, score_adjustment,
+                     int(zero_override), adjustment_note, json.dumps(mistakes), client_timestamp),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO grades (session_id, student_id, mcq_score, essay_total, "
+                    "final_score, answer_version, group_type, proctor_name, score_adjustment, "
+                    "zero_override, adjustment_note, mistakes_log) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (self.session_id, student_id, mcq_score, essay_total, total_score,
+                     answer_version, group_type, proctor_name, score_adjustment,
+                     int(zero_override), adjustment_note, json.dumps(mistakes)),
+                )
 
-    def overwrite_grade(self, student_id: str, mcq_score: float, essay_total: float,
+    def overwrite_grade(self, group_name: str, student_id: str, mcq_score: float, essay_total: float,
                          total_score: float, mistakes: list, answer_version: Optional[str],
-                         group_type: Optional[str] = None):
+                         group_type: Optional[str] = None, proctor_name: Optional[str] = None,
+                         client_timestamp: Optional[str] = None, score_adjustment: float = 0.0,
+                         zero_override: bool = False, adjustment_note: Optional[str] = None):
+        """Overwrites whichever existing row matches student_id within any
+        session ever started for `group_name` — NOT just the current live
+        session (see module docstring for why session_id alone was wrong).
+        Also re-stamps the row's session_id to the current live session,
+        so it "moves" into the active session going forward (matches
+        get_session_grades' expectations for the rest of this run)."""
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE grades SET mcq_score=?, essay_total=?, final_score=?, "
-                "answer_version=?, group_type=?, mistakes_log=?, timestamp=CURRENT_TIMESTAMP "
-                "WHERE session_id=? AND student_id=?",
-                (mcq_score, essay_total, total_score, answer_version, group_type, json.dumps(mistakes),
-                 self.session_id, student_id),
-            )
+            if client_timestamp:
+                conn.execute(
+                    "UPDATE grades SET session_id=?, mcq_score=?, essay_total=?, final_score=?, "
+                    "answer_version=?, group_type=?, proctor_name=?, score_adjustment=?, "
+                    "zero_override=?, adjustment_note=?, mistakes_log=?, timestamp=? "
+                    "WHERE student_id=? AND session_id IN "
+                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                    (self.session_id, mcq_score, essay_total, total_score, answer_version,
+                     group_type, proctor_name, score_adjustment, int(zero_override), adjustment_note,
+                     json.dumps(mistakes), client_timestamp, student_id, group_name),
+                )
+            else:
+                conn.execute(
+                    "UPDATE grades SET session_id=?, mcq_score=?, essay_total=?, final_score=?, "
+                    "answer_version=?, group_type=?, proctor_name=?, score_adjustment=?, "
+                    "zero_override=?, adjustment_note=?, mistakes_log=?, timestamp=CURRENT_TIMESTAMP "
+                    "WHERE student_id=? AND session_id IN "
+                    "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                    (self.session_id, mcq_score, essay_total, total_score, answer_version,
+                     group_type, proctor_name, score_adjustment, int(zero_override), adjustment_note,
+                     json.dumps(mistakes), student_id, group_name),
+                )
 
-    def discard_grade(self, student_id: str):
+    def discard_grade(self, group_name: str, student_id: str):
+        """Deletes whichever existing row matches student_id within any
+        session ever started for `group_name` — same session-scoping fix
+        as overwrite_grade (see module docstring)."""
         with self._connect() as conn:
             conn.execute(
-                "DELETE FROM grades WHERE session_id = ? AND student_id = ?",
-                (self.session_id, student_id),
+                "DELETE FROM grades WHERE student_id = ? AND session_id IN "
+                "(SELECT session_id FROM sessions WHERE group_name = ?)",
+                (student_id, group_name),
             )
 
     # ------------------------------------------------------------------
@@ -209,10 +264,16 @@ class GradingRepository:
         already graded in a prior session (before the group was closed and
         reopened) must still be caught as a duplicate; session_id is a
         per-'Start Live Grading'-click implementation detail, not a
-        meaningful boundary for what counts as 'already graded'."""
+        meaningful boundary for what counts as 'already graded'.
+
+        Includes group_type/mcq_score/essay_total (not just the combined
+        final_score) so the duplicate dialog on the phone can show a full
+        breakdown of both papers — enough to actually tell the two
+        physical sheets apart, not just "same student, different score"."""
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT g.final_score, g.answer_version, g.mistakes_log, g.timestamp "
+                "SELECT g.final_score, g.answer_version, g.mistakes_log, g.timestamp, g.proctor_name, "
+                "g.group_type, g.mcq_score, g.essay_total, g.score_adjustment, g.zero_override, g.adjustment_note "
                 "FROM grades g JOIN sessions s ON g.session_id = s.session_id "
                 "WHERE s.group_name = ? AND g.student_id = ? "
                 "ORDER BY g.timestamp DESC LIMIT 1",
@@ -221,29 +282,47 @@ class GradingRepository:
             row = cursor.fetchone()
         if not row:
             return None
-        final_score, answer_version, mistakes_log, timestamp = row
+        (final_score, answer_version, mistakes_log, timestamp, proctor_name,
+         group_type, mcq_score, essay_total, score_adjustment, zero_override, adjustment_note) = row
         return {
             "score": final_score,
             "answer_version": answer_version,
             "mistakes": json.loads(mistakes_log) if mistakes_log else [],
             "timestamp": timestamp,
+            "proctor_name": proctor_name,
+            "group_type": group_type,
+            "mcq_score": mcq_score,
+            "essay_total": essay_total,
+            "score_adjustment": score_adjustment,
+            "zero_override": bool(zero_override),
+            "adjustment_note": adjustment_note,
         }
 
     @staticmethod
     def delete_group_grades(db_path: str, group_name: str) -> int:
-        """Wipes every grade ever saved for this group, across all its
-        sessions — the DB-level counterpart to a fresh Excel export
-        containing only whatever a *new* live grading session produces.
-        Leaves the sessions/students rows themselves alone; only the
-        grades rows are removed. Returns the number of rows deleted."""
         with _sqlite_connection(db_path) as conn:
             cursor = conn.execute(
                 "DELETE FROM grades WHERE session_id IN "
                 "(SELECT session_id FROM sessions WHERE group_name = ?)",
                 (group_name,),
             )
-            deleted = cursor.rowcount
-        return deleted
+            return cursor.rowcount
+
+    @staticmethod
+    def get_group_proctor_stats(db_path: str, group_name: str) -> list[dict]:
+        with _sqlite_connection(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT proctor_name, COUNT(*) as count 
+                FROM grades 
+                WHERE session_id IN (SELECT session_id FROM sessions WHERE group_name = ?) 
+                GROUP BY proctor_name
+                ORDER BY count DESC
+                """,
+                (group_name,)
+            )
+            return [{"name": row["proctor_name"] or "Unknown", "scan_count": row["count"]} for row in cursor]
 
     def get_session_grades(self) -> list[dict]:
         """Used by export_group_results / a future results view — every

@@ -84,16 +84,16 @@ def test_pulse_animation_is_finite_and_self_hides(card):
     (widgets/common.py — deliberately de-animated to avoid an infinite
     repaint loop per instance): this animation must run a bounded
     number of loops and then go idle on its own, not run forever."""
-    assert card.network_flash._animation.loopCount() == 3
-    assert card.network_flash._animation.duration() == 500  # ms per loop
+    assert card.network_flash._animation.loopCount() == 5
+    assert card.network_flash._animation.duration() == 1000  # ms per loop
 
     card.network_flash.pulse()
     assert card.network_flash.isVisible() is True
 
-    # Run a REAL event loop past the total animation time (3 * 500ms)
+    # Run a REAL event loop past the total animation time (5 * 1000ms)
     # and confirm it hid itself — not inferred from the loop count alone.
     loop = QEventLoop()
-    QTimer.singleShot(2000, loop.quit)
+    QTimer.singleShot(6000, loop.quit)
     loop.exec()
 
     assert card.network_flash.isVisible() is False

@@ -52,6 +52,22 @@ class LiveMonitorMixin:
         dup_col.addWidget(self.duplicates_list)
         stats_row.addLayout(dup_col)
 
+        proctor_col = QVBoxLayout()
+        proctor_label = QLabel("SCANS BY PROCTOR")
+        proctor_label.setFont(QFont(self.fonts.orbitron, 10, QFont.Weight.Bold))
+        proctor_label.setStyleSheet(f"color: {TEXT_MUTED}; letter-spacing: 1px;")
+        self.proctor_stats_list = QListWidget()
+        self.proctor_stats_list.setFixedHeight(130)
+        self.proctor_stats_list.setMaximumWidth(200)
+        self.proctor_stats_list.setStyleSheet(
+            f"QListWidget {{ background-color: {BG_DEEP}; color: {ELECTRIC_SAPPHIRE}; "
+            f"border: 1px solid {TRUE_AZURE}; border-radius: 8px; padding: 10px; "
+            f"font-family: Consolas; font-size: 12px; }}"
+        )
+        proctor_col.addWidget(proctor_label)
+        proctor_col.addWidget(self.proctor_stats_list)
+        stats_row.addLayout(proctor_col)
+
         content_layout.addLayout(stats_row)
 
         split_row = QHBoxLayout()
@@ -138,11 +154,19 @@ class LiveMonitorMixin:
             if preview.exec() != QDialog.DialogCode.Accepted:
                 return
 
-            self.live_session.start(self.active_group_name, master_packet)
-
+            # Clear stale UI state BEFORE starting the session — start()
+            # synchronously emits score_count_changed/duplicate_ids_updated/
+            # proctor_stats_updated (the last one carries real historical
+            # data via GradingRepository.get_group_proctor_stats, not just
+            # a reset to zero). Clearing these lists AFTER start() would
+            # wipe out that freshly-populated data the moment it arrives.
             self.monitor_log.clear()
             self.phones_list.clear()
             self.duplicates_list.clear()
+            self.proctor_stats_list.clear()
+
+            self.live_session.start(self.active_group_name, master_packet)
+
             self.sub_stack.setCurrentIndex(2)
 
         except Exception as e:
@@ -165,6 +189,16 @@ class LiveMonitorMixin:
         self.duplicates_list.clear()
         for student_id in duplicate_ids:
             self.duplicates_list.addItem(f"⚠ {student_id}")
+
+    def _render_proctor_stats(self, proctor_stats):
+        """proctor_stats is [{'name': str, 'scan_count': int}, ...] from
+        GradingRepository.get_group_proctor_stats — cumulative across
+        every session ever run for this group, not just the current one
+        (unlike CONNECTED PHONES' scan_count, which is this server run
+        only). Already sorted highest-first by the query."""
+        self.proctor_stats_list.clear()
+        for entry in proctor_stats:
+            self.proctor_stats_list.addItem(f"{entry['name']} — {entry['scan_count']}")
 
     def stop_server_and_return(self):
         self.live_session.stop()

@@ -49,7 +49,7 @@ def test_save_and_read_grade(repo):
 def test_overwrite_grade(repo):
     repo.save_grade("S001", mcq_score=8.0, essay_total=2.0, total_score=10.0,
                      mistakes=[1, 2], answer_version="A")
-    repo.overwrite_grade("S001", mcq_score=9.0, essay_total=2.0, total_score=11.0,
+    repo.overwrite_grade("GroupA", "S001", mcq_score=9.0, essay_total=2.0, total_score=11.0,
                           mistakes=[1], answer_version="A")
     existing = repo.get_existing_grade("S001")
     assert existing["score"] == 11.0
@@ -59,7 +59,7 @@ def test_overwrite_grade(repo):
 def test_discard_grade(repo):
     repo.save_grade("S001", mcq_score=8.0, essay_total=2.0, total_score=10.0,
                      mistakes=[], answer_version="A")
-    repo.discard_grade("S001")
+    repo.discard_grade("GroupA", "S001")
     assert repo.get_existing_grade("S001") is None
 
 
@@ -89,6 +89,28 @@ def test_get_existing_grade_in_group_spans_sessions(db_path):
     # But the fresh session's own get_existing_grade shouldn't see it —
     # different session_id.
     assert new_repo.get_existing_grade("S001") is None
+
+
+def test_get_group_proctor_stats(db_path, repo):
+    """Real bug found in an audit: get_group_proctor_stats read results
+    with dict-style row["col"] access, but its connection never set
+    row_factory = sqlite3.Row — sqlite3 cursors yield plain tuples by
+    default, so every call crashed with
+    'TypeError: tuple indices must be integers or slices, not str'.
+    This is called on essentially every score save/removal/duplicate
+    resolution (see LiveSessionController._refresh_proctor_stats), so it
+    reliably fired during any live grading session."""
+    repo.save_grade("S001", mcq_score=8.0, essay_total=2.0, total_score=10.0,
+                     mistakes=[], answer_version="A", proctor_name="Ali")
+    repo.save_grade("S002", mcq_score=7.0, essay_total=1.0, total_score=8.0,
+                     mistakes=[], answer_version="A", proctor_name="Ali")
+    repo.save_grade("S003", mcq_score=6.0, essay_total=0.0, total_score=6.0,
+                     mistakes=[], answer_version="A", proctor_name="Mona")
+
+    stats = GradingRepository.get_group_proctor_stats(db_path, "GroupA")
+
+    by_name = {row["name"]: row["scan_count"] for row in stats}
+    assert by_name == {"Ali": 2, "Mona": 1}
 
 
 def test_get_session_grades(repo):

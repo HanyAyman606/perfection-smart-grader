@@ -51,12 +51,14 @@ GRADIENT_COOL = f"qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ELECTRIC_SAPPH
 # pages. Text is now dark-on-white instead of accent-on-dark for readability;
 # the accent still shows up in the border + focus ring.
 INPUT_STYLE = f"""
-    QWidget {{
+    QSpinBox, QDoubleSpinBox, QComboBox, QLineEdit {{
         background-color: {BG_PANEL}; color: {TEXT_FEED};
-        border: 2px solid {TRUE_AZURE}; border-radius: 8px; padding: 10px;
+        border: 2px solid {TRUE_AZURE}; border-radius: 8px; 
+        padding: 0px 10px;
+        min-height: 38px;
         font-size: 14px; font-weight: bold;
     }}
-    QWidget:focus {{ border: 2px solid {NEON_PINK}; }}
+    QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QLineEdit:focus {{ border: 2px solid {NEON_PINK}; }}
 
     QSpinBox::up-button, QDoubleSpinBox::up-button,
     QSpinBox::down-button, QDoubleSpinBox::down-button {{

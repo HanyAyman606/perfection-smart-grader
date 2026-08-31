@@ -43,6 +43,7 @@ class SessionManagerPage(QWidget, GroupHubMixin, GroupDetailMixin, LiveMonitorMi
         self.live_session.phones_updated.connect(self._render_phones)
         self.live_session.score_count_changed.connect(self._render_score_count)
         self.live_session.duplicate_ids_updated.connect(self._render_duplicates)
+        self.live_session.proctor_stats_updated.connect(self._render_proctor_stats)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

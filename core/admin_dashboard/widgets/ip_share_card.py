@@ -31,7 +31,7 @@ class NetworkChangeFlash(QLabel):
     just auto-updated, so the admin doesn't have to spot the value change
     on their own.
 
-    Runs a FINITE opacity animation (3 pulses over ~1.5s) rather than an
+    Runs a FINITE opacity animation (5 pulses over ~5s) rather than an
     always-on loop. PulsingDot in widgets/common.py was deliberately
     de-animated for exactly this cost reason (an infinite repaint loop
     per instance, "performance over decoration on slower machines") — this
@@ -58,7 +58,7 @@ class NetworkChangeFlash(QLabel):
         self._animation.setKeyValueAt(0.0, 0.15)
         self._animation.setKeyValueAt(0.5, 1.0)
         self._animation.setKeyValueAt(1.0, 0.15)
-        self._animation.setLoopCount(5)  # ~1.5s total, then stops — never infinite
+        self._animation.setLoopCount(5)  # ~5s total, then stops — never infinite
         self._animation.finished.connect(lambda: self.setVisible(False))
 
     def pulse(self):
